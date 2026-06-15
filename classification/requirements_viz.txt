@@ -1,0 +1,21 @@
+# Requirements for Decision Boundary Visualization Module and Streamlit Dashboard
+# Install with: pip install -r requirements_viz.txt
+
+# Core dependencies (required)
+numpy>=1.20.0
+matplotlib>=3.3.0
+
+# PyTorch support (recommended for checkpoint loading)
+torch>=1.9.0
+
+# Dimensionality reduction (at least one recommended)
+scikit-learn>=0.24.0  # For t-SNE
+umap-learn>=0.5.0     # For UMAP (faster for large datasets)
+
+# Streamlit dashboard dependencies
+streamlit>=1.28.0     # Interactive web dashboard
+pandas>=1.3.0         # Data manipulation and display
+pillow>=8.0.0         # Image loading and display
+
+# Optional: MLflow integration (if using ExperimentTracker with MLflow)
+mlflow>=1.20.0
