@@ -35,7 +35,7 @@ Fixed imports to use `uqlab_orchestrator.api_client` instead:
 
 ### Directory Structure
 ```
-walaris-cen/
+uqlab-streamlit/
 ├── ui_components/                    # ROOT LEVEL (Legacy)
 │   ├── __init__.py                   # Re-exports from local files
 │   ├── experiment_config.py          # Actual implementation

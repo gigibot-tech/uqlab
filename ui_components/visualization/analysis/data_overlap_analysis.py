@@ -16,7 +16,7 @@ import numpy as np
 
 def load_experiment_data(experiment_id: str) -> Dict:
     """Load training and evaluation data from results.pt"""
-    results_path = Path(f"/tmp/walaris_experiments/{experiment_id}/results/results.pt")
+    results_path = Path(f"/tmp/uqlab_experiments/{experiment_id}/results/results.pt")
     
     if not results_path.exists():
         return None

@@ -67,7 +67,7 @@ def render_model_selector(
             best_aleatoric = exp.get('aleatoric_auroc', 0.0)
             
             # Try to load config from filesystem for display
-            config_path = Path(f"/tmp/walaris_experiments/{exp['id']}/config.yaml")
+            config_path = Path(f"/tmp/uqlab_experiments/{exp['id']}/config.yaml")
             model_name = 'N/A'
             epochs = 'N/A'
             
@@ -122,7 +122,7 @@ def render_model_selector(
                 st.markdown("**Configuration:**")
                 
                 # Load config from filesystem (not stored in database)
-                config_path = Path(f"/tmp/walaris_experiments/{selected_id}/config.yaml")
+                config_path = Path(f"/tmp/uqlab_experiments/{selected_id}/config.yaml")
                 if config_path.exists():
                     import yaml
                     with open(config_path, 'r') as f:
@@ -159,7 +159,7 @@ def render_model_selector(
                     st.caption(f"📁 Results: {selected_exp['results_path']}")
                 
                 # Load and display training data info from results.pt
-                results_pt_path = Path(f"/tmp/walaris_experiments/{selected_id}/results/results.pt")
+                results_pt_path = Path(f"/tmp/uqlab_experiments/{selected_id}/results/results.pt")
                 if results_pt_path.exists():
                     try:
                         results_data = torch.load(results_pt_path, map_location='cpu', weights_only=False)
@@ -191,7 +191,7 @@ def render_model_selector(
         # Load checkpoint button
         if st.button("🔽 Load Model Checkpoint", type="primary", use_container_width=True):
             with st.spinner("Loading model checkpoint..."):
-                checkpoint_path = Path(f"/tmp/walaris_experiments/{selected_id}/results/checkpoint.pt")
+                checkpoint_path = Path(f"/tmp/uqlab_experiments/{selected_id}/results/checkpoint.pt")
                 
                 if not checkpoint_path.exists():
                     st.error(f"❌ Checkpoint not found at {checkpoint_path}")
@@ -317,7 +317,7 @@ def render_model_inference_panel(
         
         # Load results if available
         exp_id = experiment.get('id')
-        results_path = Path(f"/tmp/walaris_experiments/{exp_id}/results/results.pt")
+        results_path = Path(f"/tmp/uqlab_experiments/{exp_id}/results/results.pt")
         
         if results_path.exists():
             try:

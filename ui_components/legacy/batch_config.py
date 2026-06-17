@@ -425,10 +425,10 @@ def render_batch_base_config(
                 if swept_parameter != "mc_passes":
                     config["mc_passes"] = st.number_input(
                         "MC Dropout Passes",
-                        min_value=5,
+                        min_value=0,
                         max_value=100,
-                        value=20,
-                        help="Number of forward passes for uncertainty estimation",
+                        value=5,
+                        help="Number of forward passes for uncertainty estimation. Set to 0 to disable MC Dropout (faster but no uncertainty). Recommended: 5-10 for efficiency, 20-50 for accuracy.",
                         key="batch_base_mc_passes"
                     )
                 else:

@@ -246,10 +246,11 @@ def render_model_config() -> Tuple[str, str, str, int, float, bool, int, List[in
     """
     st.markdown("**🏗️ Model Architecture**")
     
-    # Architecture selector
+    # Architecture selector (default to resnet18_mcdropout)
     architecture = st.selectbox(
         "Architecture",
         options=["resnet18_mcdropout", "cnn_mcdropout", "dinov2_mlp"],
+        index=0,  # Default to ResNet18
         format_func=lambda x: {
             "dinov2_mlp": "🎯 DINOv2 + MLP (Feature Space)",
             "cnn_mcdropout": "🔷 CNN with MC Dropout (End-to-End)",
@@ -308,7 +309,7 @@ def render_model_config() -> Tuple[str, str, str, int, float, bool, int, List[in
         with col1:
             hidden_dim = st.number_input("Hidden Dim", 128, 1024, 512, 64)
         with col2:
-            dropout = st.number_input("Dropout", 0.0, 0.9, 0.3, 0.1)
+            dropout = st.number_input("Dropout", 0.0, 0.9, 0.0, 0.1)  # Default to 0.0
         with col3:
             use_untrained_resnet = st.checkbox(
                 "Train from Scratch",
@@ -384,8 +385,8 @@ def render_evaluation_config(
     with col1:
         mc_passes = st.number_input(
             "MC Dropout Passes",
-            min_value=5, max_value=100, value=20,
-            help="Number of forward passes with dropout enabled to estimate epistemic uncertainty. Range: 5-100 (Quick: 10-20, Thorough: 50-100)",
+            min_value=0, max_value=100, value=5,
+            help="Number of forward passes with dropout enabled to estimate epistemic uncertainty. Set to 0 to disable MC Dropout (faster but no uncertainty). Recommended: 5-10 for efficiency, 20-50 for accuracy.",
             key=f"{key_prefix}_mc_passes"
         )
     with col2:

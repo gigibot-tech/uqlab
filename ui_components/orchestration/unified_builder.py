@@ -1054,6 +1054,7 @@ def render_experiment_execution_panel(
                                 
                                 st.success(f"✅ Started {started_count} experiments in batch {timestamp}!")
                                 st.rerun()
+                                return  # CRITICAL: Stop execution after rerun
                                 
                             except requests.exceptions.RequestException as e:
                                 st.error(f"❌ Failed to start batch: {str(e)}")

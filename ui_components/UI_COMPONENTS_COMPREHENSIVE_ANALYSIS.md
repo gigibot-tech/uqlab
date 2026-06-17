@@ -10,11 +10,11 @@
 
 ### Two `ui_components` Directories Exist:
 
-1. **Root Level**: `walaris-cen/ui_components/` (24 files)
+1. **Root Level**: `uqlab-streamlit/ui_components/` (24 files)
    - Contains `api_sweep_launch.py` ✅
    - Legacy location, used by `streamlit_app.py`
    
-2. **Package Level**: `walaris-cen/src/uqlab/ui_components/` (23 files)
+2. **Package Level**: `uqlab-streamlit/src/uqlab/ui_components/` (23 files)
    - Missing `api_sweep_launch.py` ❌
    - Proper package location, used by `streamlit_app_progressive.py`
    - Has imports expecting `api_sweep_launch` to exist
@@ -31,7 +31,7 @@ Files in `src/uqlab/ui_components/` import from `.api_sweep_launch` but the file
 ### Category 1: API Orchestration Logic (Should Move to `uqlab_orchestrator`)
 
 #### 1. `api_sweep_launch.py` ⚠️ **CRITICAL - MISSING FROM PACKAGE**
-**Location**: Only in `walaris-cen/ui_components/`  
+**Location**: Only in `uqlab-streamlit/ui_components/`  
 **Purpose**: API client for launching sweep experiments  
 **Functions**:
 - `normalize_dinov2_model()` - Config normalization
@@ -193,7 +193,7 @@ Files in `src/uqlab/ui_components/` import from `.api_sweep_launch` but the file
 #### 19. `validation_runner.py`
 **Purpose**: Local validation experiment execution  
 **Functions**:
-- `_resolve_walaris_cen_root()` - Path resolution
+- `_resolve_uqlab_cen_root()` - Path resolution
 - `_subprocess_env()` - Environment setup
 - `_stream_subprocess()` - Process execution
 - `run_validation_experiments()` - Orchestration
@@ -298,7 +298,7 @@ Files in `src/uqlab/ui_components/` import from `.api_sweep_launch` but the file
 **Goal**: Single source of truth for UI components
 
 1. ✅ Verify all files in `src/uqlab/ui_components/` are up-to-date
-2. ✅ Delete root-level `walaris-cen/ui_components/` directory
+2. ✅ Delete root-level `uqlab-streamlit/ui_components/` directory
 3. ✅ Update `streamlit_app.py` imports to use `uqlab.ui_components`
 4. ✅ Test all Streamlit apps
 
@@ -354,7 +354,7 @@ Files in `src/uqlab/ui_components/` import from `.api_sweep_launch` but the file
 ## 📁 Final Directory Structure
 
 ```
-walaris-cen/
+uqlab-streamlit/
 ├── src/
 │   ├── uqlab/
 │   │   ├── ui_components/          # Pure UI rendering only

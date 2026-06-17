@@ -46,6 +46,7 @@ def render_configuration_progress(
     
     if st.button("🔄 Refresh Data"):
         st.rerun()
+        return  # CRITICAL: Stop execution after rerun
 
 
 def render_roc_explanation(

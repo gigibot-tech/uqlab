@@ -16,13 +16,13 @@ from typing import Iterable, Optional
 import pandas as pd
 
 
-def _resolve_walaris_cen_root() -> Path:
+def _resolve_uqlab_cen_root() -> Path:
     """
     Repo root (contains ``pyproject.toml`` and ``scripts/``).
 
     Do not rely on a fixed ``parents[N]`` depth: ``__file__`` depth varies with
     symlink layout, editable installs, and refactors, which previously produced
-    bogus paths like ``src/walaris/analyze_validation_results.py``.
+    bogus paths like ``src/uqlab/analyze_validation_results.py``.
     """
     here = Path(__file__).resolve()
     for p in (here, *here.parents):
@@ -31,7 +31,7 @@ def _resolve_walaris_cen_root() -> Path:
     return here.parents[3]
 
 
-_PROJECT_ROOT = _resolve_walaris_cen_root()
+_PROJECT_ROOT = _resolve_uqlab_cen_root()
 _SRC = _PROJECT_ROOT / "src"
 for _p in (_SRC, _PROJECT_ROOT):
     if str(_p) not in sys.path:

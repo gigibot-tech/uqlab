@@ -2,7 +2,7 @@
 Discover completed training runs on disk when the API database has no rows.
 
 API experiments live in SQLite; artifacts live under ``data/experiments/`` or
-legacy ``/tmp/walaris_experiments/``. Local preset sweeps use ``results/validation/``
+legacy ``/tmp/uqlab_experiments/``. Local preset sweeps use ``results/validation/``
 and are not included here.
 """
 
@@ -113,5 +113,41 @@ def discover_experiments_from_disk() -> list[dict[str, Any]]:
     """Build API-shaped experiment dicts from on-disk ``results/`` folders."""
     records: dict[str, dict[str, Any]] = {}
     _scan_experiment_root(experiments_root(), records)
-    _scan_experiment_root(Path("/tmp/walaris_experiments"), records)
+    _scan_experiment_root(Path("/tmp/uqlab_experiments"), records)
     return list(records.values())
+
+
+def fetch_experiments_for_ui(
+    api_base_url: str,
+    get_headers_func,
+    *,
+    timeout: int = 10,
+) -> list[dict[str, Any]] | None:
+    """
+    Merge API experiments with on-disk runs missing from SQLite.
+
+    Returns ``None`` if the API is unreachable.
+    """
+    import requests
+
+    try:
+        response = requests.get(
+            f"{api_base_url}/api/v1/experiments/no-auth",
+            headers=get_headers_func(),
+            timeout=timeout,
+        )
+        response.raise_for_status()
+        experiments = list(response.json())
+    except Exception:
+        return None
+
+    try:
+        api_ids = {str(e.get("id")) for e in experiments}
+        for record in discover_experiments_from_disk():
+            if str(record.get("id")) not in api_ids:
+                experiments.append(record)
+    except Exception:
+        pass
+
+    experiments.sort(key=lambda e: e.get("created_at") or "", reverse=True)
+    return experiments

@@ -1,4 +1,4 @@
-"""Walaris unified UQ validation and paper benchmark package."""
+"""UQLab unified UQ validation and paper benchmark package."""
 
 from uqlab.results_io import (
     SIGNAL_NAMES,

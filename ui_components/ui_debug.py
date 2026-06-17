@@ -18,6 +18,9 @@ UI_DEBUG_DEFAULTS_VERSION_KEY = "ui_debug_defaults_v3"
 RESULTS_DEFAULTS_OFF: frozenset[str] = frozenset({
     "results_experiment_details",
     "results_training_data",
+    "results_running_progress",
+    "results_auto_refresh_ui",
+    "results_auto_refresh_schedule",
 })
 
 # key -> (label, default_on)
@@ -39,12 +42,11 @@ UI_DEBUG_REGISTRY: Dict[str, Tuple[str, bool]] = {
     "results_local_presets": ("Results · local preset sweeps", True),
     "results_local_viz": ("Results · local validation viz", True),
     "results_status_metrics": ("Footer · experiment status counts", True),
-    "results_running_progress": ("Results · running progress bars", True),
-    "results_auto_refresh_ui": ("Results · auto-refresh controls", True),
+    "results_running_progress": ("Results · running progress bars", False),
+    "results_auto_refresh_ui": ("Results · auto-refresh controls", False),
     "results_auto_refresh_schedule": ("Results · 5s auto-rerun (JS)", False),
     "results_bulk_delete": ("Results · bulk delete", True),
-    "results_sweep_groups": ("Results · sweep group expanders", True),
-    "results_sweep_summary": ("Results · sweep summary cards", True),
+    "results_sweep_groups": ("Results · sweep groups (expanders + summary cards)", True),
     "results_standalone_table": ("Results · standalone table", True),
     "results_experiment_details": ("Results · per-run details + bar charts", False),
     "results_training_data": ("Results · training data inspection", False),
@@ -63,7 +65,6 @@ UI_DEBUG_PARENT: Dict[str, str] = {
     "results_standalone_table": "results_section",
     "results_training_data": "results_section",
     "results_batch_ui": "results_section",
-    "results_sweep_summary": "results_sweep_groups",
     "results_experiment_details": "results_sweep_groups",
     # results_status_metrics: independent footer toggle (still turned off by Results off)
 }
@@ -97,7 +98,6 @@ UI_DEBUG_SECTIONS: List[Tuple[str, List[str]]] = [
             "results_auto_refresh_schedule",
             "results_bulk_delete",
             "results_sweep_groups",
-            "results_sweep_summary",
             "results_standalone_table",
             "results_experiment_details",
             "results_training_data",

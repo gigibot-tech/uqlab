@@ -57,7 +57,7 @@ def setup_logging(
         format_string = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
     
     # Create logger
-    logger = logging.getLogger("walaris")
+    logger = logging.getLogger("uqlab")
     logger.setLevel(getattr(logging, log_level.upper()))
     
     # Remove existing handlers
@@ -83,7 +83,7 @@ def setup_logging(
     return logger
 
 
-def get_logger(name: str = "walaris") -> logging.Logger:
+def get_logger(name: str = "uqlab") -> logging.Logger:
     """Get or create a logger instance."""
     return logging.getLogger(name)
 

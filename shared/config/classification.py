@@ -191,10 +191,13 @@ class ExperimentConfig:
         )
         noise_type = data_dict.get("noise_type", "worse_label")
         try:
-            from uqlab.data_loaders.cifar10n_loader import normalize_noise_type
-
+            # Import from renamed data loaders module
+            import importlib
+            loaders_module = importlib.import_module("uqlab.1_data.loaders.cifar10n_loader")
+            normalize_noise_type = getattr(loaders_module, "normalize_noise_type")
             noise_type = normalize_noise_type(noise_type)
-        except ImportError:
+        except (ImportError, AttributeError):
+            # Fallback normalization if import fails
             if noise_type in ("none", "clean", "no_noise"):
                 noise_type = "clean_label"
             elif noise_type == "worst":

@@ -1,7 +1,7 @@
 """
-Persistent data locations for Walaris (experiments, SQLite, caches).
+Persistent data locations for UQLab (experiments, SQLite, caches).
 
-Override with env ``WALARIS_DATA_DIR`` (absolute path recommended).
+Override with env ``UQLAB_DATA_DIR`` (absolute path recommended).
 
 Default: ``<repo>/data/`` — survives backend/Streamlit restarts (unlike ``/tmp``).
 """
@@ -18,14 +18,14 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 
 def data_root() -> Path:
     """Root directory for DB, experiment outputs, and optional local artifacts."""
-    raw = os.environ.get("WALARIS_DATA_DIR", "").strip()
+    raw = os.environ.get("UQLAB_DATA_DIR", "").strip()
     root = Path(raw).expanduser() if raw else _REPO_ROOT / "data"
     root.mkdir(parents=True, exist_ok=True)
     return root.resolve()
 
 
 def sqlite_db_path() -> Path:
-    return data_root() / "walaris.db"
+    return data_root() / "uqlab.db"
 
 
 def experiments_root() -> Path:
@@ -51,7 +51,7 @@ def resolve_experiment_results_dir(
     Find on-disk results for an API experiment id.
 
     Checks DB ``results_path``, then ``data/experiments/<id>/results``,
-    then legacy ``/tmp/walaris_experiments/<id>/results``.
+    then legacy ``/tmp/uqlab_experiments/<id>/results``.
     """
     eid = str(experiment_id)
     candidates: list[Path] = []
@@ -61,7 +61,7 @@ def resolve_experiment_results_dir(
         candidates.append(raw if raw.name == "results" else raw / "results")
 
     candidates.append(experiment_results_dir(eid))
-    candidates.append(Path("/tmp/walaris_experiments") / eid / "results")
+    candidates.append(Path("/tmp/uqlab_experiments") / eid / "results")
 
     seen: set[str] = set()
     for path in candidates:

@@ -12,6 +12,9 @@ import json
 from pathlib import Path
 from typing import Dict, List, Callable, Any
 
+# Import training data inspection
+from .training_data_inspection import render_training_data_stats
+
 
 def render_experiment_results(
     api_base_url: str,
@@ -40,10 +43,12 @@ def render_experiment_results(
     with col2:
         if st.button("🔄 Refresh Now", use_container_width=True):
             st.rerun()
+            return  # CRITICAL: Stop execution after rerun
     with col3:
         if st.button("🛑 Stop Refresh", use_container_width=True):
             auto_refresh = False
             st.rerun()
+            return  # CRITICAL: Stop execution after rerun
     
     try:
         # Fetch experiments using no-auth endpoint
@@ -84,16 +89,27 @@ def render_experiment_results(
             # Start training button for queued experiments
             _render_start_training_buttons(experiments, api_base_url, get_headers_func)
             
-            # Enterprise-grade auto-refresh using st.empty() placeholder
+            # Enterprise-grade auto-refresh (non-blocking — no time.sleep loop)
             if auto_refresh:
-                # Use a placeholder for countdown
-                refresh_placeholder = st.empty()
-                import time
-                for remaining in range(5, 0, -1):
-                    refresh_placeholder.info(f"🔄 Auto-refreshing in {remaining} seconds...")
-                    time.sleep(1)
-                refresh_placeholder.empty()
-                st.rerun()
+                running_statuses = {"pending", "running", "queued"}
+                has_running = any(exp.get("status") in running_statuses for exp in experiments)
+                st.session_state._experiments_has_running = has_running
+
+                if not has_running:
+                    st.caption("✅ All experiments finished — auto-refresh off.")
+                    auto_refresh = False
+                else:
+                    import streamlit.components.v1 as components
+
+                    components.html(
+                        '<script>setTimeout(function(){'
+                        'window.parent.postMessage({type:"streamlit:rerun"},"*");'
+                        "},5000);</script>",
+                        height=0,
+                    )
+                    st.caption(
+                        "🔄 Auto-refresh every 5s while runs are active. Uncheck to stop."
+                    )
         
     except requests.exceptions.RequestException as e:
         st.error(f"Failed to fetch experiments: {str(e)}")
@@ -118,7 +134,7 @@ def _render_experiment_detail(
     """
     # Try to load results from files
     results_data = None
-    results_path = f"/tmp/walaris_experiments/{exp['id']}/results"
+    results_path = f"/tmp/uqlab_experiments/{exp['id']}/results"
     summary_file = f"{results_path}/summary.json"
     
     try:
@@ -169,6 +185,10 @@ def _render_experiment_detail(
             st.warning("⚠️ Results files not found. Check results_path.")
             st.code(f"Expected: {summary_file}")
         
+        # Training data inspection section
+        st.markdown("---")
+        render_training_data_stats(exp['id'])
+        
         # Export to watsonx.ai button (only for completed experiments)
         if exp['status'] == 'completed':
             st.markdown("---")
@@ -178,7 +198,7 @@ def _render_experiment_detail(
             if st.button(f"📦 Export to watsonx.ai", key=f"export_{exp['id']}", type="primary"):
                 try:
                     # Import here to avoid circular dependencies
-                    from uq_classification.watsonx_export import export_all_for_watsonx
+                    from uqlab.evaluation.classification.watsonx_export import export_all_for_watsonx
                     import torch
                     
                     # Load checkpoint and results
@@ -260,6 +280,7 @@ def _render_experiment_detail(
                 if st.button(f"🗑️ Delete", key=f"delete_{exp['id']}", type="secondary", use_container_width=True):
                     st.session_state[confirm_key] = True
                     st.rerun()
+                    return  # CRITICAL: Stop execution after rerun
             with col_del2:
                 st.caption("⚠️ This will permanently delete the experiment and all its data")
         else:
@@ -279,6 +300,7 @@ def _render_experiment_detail(
                         # Clear confirmation state
                         del st.session_state[confirm_key]
                         st.rerun()
+                        return  # CRITICAL: Stop execution after rerun
                     except Exception as e:
                         st.error(f"Failed to delete experiment: {str(e)}")
                         st.session_state[confirm_key] = False
@@ -286,6 +308,7 @@ def _render_experiment_detail(
                 if st.button("❌ Cancel", key=f"confirm_no_{exp['id']}", use_container_width=True):
                     st.session_state[confirm_key] = False
                     st.rerun()
+                    return  # CRITICAL: Stop execution after rerun
 
 
 def _render_experiment_results_data(results_data: Dict) -> None:
@@ -381,6 +404,7 @@ def _render_start_training_buttons(
                     start_response.raise_for_status()
                     st.success(f"✅ Training started for {exp['name']}")
                     st.rerun()
+                    return  # CRITICAL: Stop execution after rerun
                 except Exception as e:
                     st.error(f"Failed to start training: {str(e)}")
 

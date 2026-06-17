@@ -246,11 +246,10 @@ def render_experiment_results_panel(
                 f"🔬 {group['name']} ({len(group['experiments'])} runs)",
                 expanded=(i == 0 and ui_on("results_experiment_details")),
             ):
-                if ui_on("results_sweep_summary"):
-                    render_sweep_group_summary(
-                        group,
-                        show_details=ui_on("results_experiment_details"),
-                    )
+                render_sweep_group_summary(
+                    group,
+                    show_details=ui_on("results_experiment_details"),
+                )
 
     if ui_on("results_standalone_table") and standalone:
         st.markdown("#### 🧪 Standalone experiments")

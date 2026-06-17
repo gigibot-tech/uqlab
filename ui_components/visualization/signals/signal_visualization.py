@@ -42,15 +42,10 @@ def render_batch_results(
         st.info("No batch experiments found. Create one using the batch form above.")
         return
 
-    # Filter out invalid completed batches (completed with 0 runs = database inconsistency)
-    valid_batches = [
-        b for b in batches
-        if not (b["status"] == "completed" and b.get("completed_runs", 0) == 0)
-    ]
-    
-    if not valid_batches:
-        st.info("No valid batch experiments found. Create one using the batch form above.")
-        return
+    # Use all batches - don't filter based on completed_runs
+    # The completed_runs field may not be updated correctly in all cases,
+    # but the batch experiments themselves are valid and should be displayed
+    valid_batches = batches
 
     batch_df = pd.DataFrame(
         [
@@ -91,6 +86,7 @@ def render_batch_results(
                     start_response.raise_for_status()
                     st.success(f"✅ Batch '{selected_batch['name']}' started successfully!")
                     st.rerun()
+                    return  # CRITICAL: Stop execution after rerun
                 except requests.exceptions.RequestException as exc:
                     st.error(f"Failed to start batch: {str(exc)}")
                     if hasattr(exc, "response") and exc.response is not None:
@@ -108,6 +104,7 @@ def render_batch_results(
                     result = retry_response.json()
                     st.success(f"✅ {result.get('message', 'Retry started')}")
                     st.rerun()
+                    return  # CRITICAL: Stop execution after rerun
                 except requests.exceptions.RequestException as exc:
                     st.error(f"Failed to retry batch: {str(exc)}")
                     if hasattr(exc, "response") and exc.response is not None:
@@ -129,6 +126,7 @@ def render_batch_results(
                 if st.button(f"🗑️ Delete Batch", key=f"delete_batch_{selected_batch_id}", type="secondary", use_container_width=True):
                     st.session_state[confirm_key] = True
                     st.rerun()
+                    return  # CRITICAL: Stop execution after rerun
             with col_del2:
                 st.caption("⚠️ This will permanently delete the batch and all its experiment runs")
         else:
@@ -148,6 +146,7 @@ def render_batch_results(
                         # Clear confirmation state
                         del st.session_state[confirm_key]
                         st.rerun()
+                        return  # CRITICAL: Stop execution after rerun
                     except requests.exceptions.RequestException as exc:
                         st.error(f"Failed to delete batch: {str(exc)}")
                         if hasattr(exc, "response") and exc.response is not None:
@@ -157,6 +156,7 @@ def render_batch_results(
                 if st.button("❌ Cancel", key=f"confirm_no_batch_{selected_batch_id}", use_container_width=True):
                     st.session_state[confirm_key] = False
                     st.rerun()
+                    return  # CRITICAL: Stop execution after rerun
 
     try:
         result_response = requests.get(
@@ -457,7 +457,7 @@ def render_batch_results(
     if not batch_id_str:
         st.warning("⚠️ Batch ID not available")
     else:
-        batch_dir = f"/tmp/walaris_experiments/batch_{batch_id_str}"
+        batch_dir = f"/tmp/uqlab_experiments/batch_{batch_id_str}"
         
         # Debug output
         with st.expander("🔍 Debug Information", expanded=False):
@@ -494,7 +494,7 @@ def render_batch_results(
         # Get list of completed experiments in this batch
         batch_id_str = results.get("batch_id")
         if batch_id_str:
-            batch_dir = Path(f"/tmp/walaris_experiments/batch_{batch_id_str}")
+            batch_dir = Path(f"/tmp/uqlab_experiments/batch_{batch_id_str}")
             experiments_dir = batch_dir / "experiments"
             
             if experiments_dir.exists():
@@ -899,7 +899,7 @@ def _export_batch_experiment(exp_dir: Path, batch_info: Dict) -> None:
         batch_info: Batch metadata dictionary
     """
     try:
-        from uq_classification.watsonx_export import export_all_for_watsonx
+        from uqlab.evaluation.classification.watsonx_export import export_all_for_watsonx
         import torch
         import yaml
         
@@ -987,7 +987,7 @@ def _export_all_batch_experiments(exp_dirs: List[Path], batch_info: Dict, batch_
         batch_id: Batch identifier
     """
     try:
-        from uq_classification.watsonx_export import export_all_for_watsonx
+        from uqlab.evaluation.classification.watsonx_export import export_all_for_watsonx
         import torch
         import yaml
         import zipfile
@@ -997,7 +997,7 @@ def _export_all_batch_experiments(exp_dirs: List[Path], batch_info: Dict, batch_
         
         # Create a master export directory
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        master_export_dir = Path(f"/tmp/walaris_experiments/batch_{batch_id}/watsonx_batch_export_{timestamp}")
+        master_export_dir = Path(f"/tmp/uqlab_experiments/batch_{batch_id}/watsonx_batch_export_{timestamp}")
         master_export_dir.mkdir(parents=True, exist_ok=True)
         
         # Progress tracking

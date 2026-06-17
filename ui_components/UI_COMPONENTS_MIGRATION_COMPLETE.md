@@ -40,7 +40,7 @@ from uqlab_orchestrator.api_client import launch_api_sweep  # ✅ Correct
 
 ### Before
 ```
-walaris-cen/
+uqlab-streamlit/
 ├── ui_components/              # 24 duplicate .py files
 │   ├── __init__.py
 │   ├── experiment_config.py    # Duplicate
@@ -55,7 +55,7 @@ walaris-cen/
 
 ### After
 ```
-walaris-cen/
+uqlab-streamlit/
 ├── ui_components/              # ✅ Pure re-export shim
 │   ├── __init__.py            # Re-exports from uqlab.ui_components
 │   └── legacy/                # Kept for backward compat
@@ -94,7 +94,7 @@ from uqlab.ui_components.legacy import (
 
 ### Directory Structure
 ```
-walaris-cen/
+uqlab-streamlit/
 ├── ui_components/                    # Backward compatibility shim
 │   ├── __init__.py                   # Re-exports from uqlab.ui_components
 │   └── legacy/                       # Legacy batch config components

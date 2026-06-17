@@ -17,7 +17,7 @@ from typing import Callable, Optional
 import streamlit as st
 
 
-def _resolve_walaris_cen_root() -> Path:
+def _resolve_uqlab_cen_root() -> Path:
     here = Path(__file__).resolve()
     for p in (here, *here.parents):
         if (p / "pyproject.toml").is_file() and (p / "scripts").is_dir():
@@ -25,7 +25,7 @@ def _resolve_walaris_cen_root() -> Path:
     return here.parents[3]
 
 
-_PROJECT_ROOT = _resolve_walaris_cen_root()
+_PROJECT_ROOT = _resolve_uqlab_cen_root()
 _SRC = _PROJECT_ROOT / "src"
 for _entry in (str(_SRC), str(_PROJECT_ROOT)):
     if _entry not in sys.path:

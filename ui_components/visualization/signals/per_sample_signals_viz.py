@@ -211,7 +211,7 @@ def render_per_sample_signal_visualizations(df: pd.DataFrame) -> None:
         if not ude_path.exists():
             st.warning(
                 f"⚠️ UDE scores not found. Run the analysis script first:\n\n"
-                f"```bash\ncd walaris-cen && source .venv/bin/activate && "
+                f"```bash\ncd uqlab-streamlit && source .venv/bin/activate && "
                 f"python scripts/calculate_ude_scores.py\n```"
             )
             st.info(

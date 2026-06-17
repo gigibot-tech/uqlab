@@ -75,6 +75,9 @@ from .legacy import (
 # Results visualization components
 from .results import (
     render_experiment_results,
+    render_training_data_stats,
+    parse_training_data_stats,
+    CIFAR10_CLASSES,
 )
 
 # Signal visualization components
@@ -136,10 +139,19 @@ from .visualization.validation.hypothesis_validation import (
     render_hypothesis_validation_tab,
 )
 
-# Utility components
+# Utility components (from utils.py file, not utils/ directory)
 from .utils import (
     render_configuration_progress,
     render_roc_explanation,
+)
+
+# Sweep grouping utilities (from grouping/ directory)
+from .grouping import (
+    group_experiments_intelligently,
+    group_experiments_by_config_similarity,
+    group_experiments_by_metadata,
+    group_experiments_by_name_pattern,
+    render_sweep_group_summary,
 )
 
 # Define what gets exported with "from ui_components import *"
@@ -173,6 +185,9 @@ __all__ = [
     # Results
     'render_experiment_results',
     'render_batch_results',
+    'render_training_data_stats',
+    'parse_training_data_stats',
+    'CIFAR10_CLASSES',
     # Model selector
     'render_model_selector',
     'render_model_inference_panel',

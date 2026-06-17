@@ -75,7 +75,7 @@ src/uqlab/ui_components/
 - `results/__init__.py`
 
 ### 4. Updated Root `__init__.py`
-Updated [`src/uqlab/ui_components/__init__.py`](walaris-cen/src/uqlab/ui_components/__init__.py:1) to:
+Updated [`src/uqlab/ui_components/__init__.py`](uqlab-streamlit/src/uqlab/ui_components/__init__.py:1) to:
 - Import from new organized structure
 - Maintain backward compatibility
 - Document new organization
@@ -83,7 +83,7 @@ Updated [`src/uqlab/ui_components/__init__.py`](walaris-cen/src/uqlab/ui_compone
 
 ### 5. Fixed Internal Imports
 Updated internal imports in moved files:
-- [`results/results.py`](walaris-cen/src/uqlab/ui_components/results/results.py:15) - Fixed imports from signal_sweep_paper_viz and smart_experiment_selector
+- [`results/results.py`](uqlab-streamlit/src/uqlab/ui_components/results/results.py:15) - Fixed imports from signal_sweep_paper_viz and smart_experiment_selector
 
 ## New Import Patterns
 
@@ -164,9 +164,9 @@ from uqlab.ui_components import experiment_config
 
 ## Related Documentation
 
-- [`UI_COMPONENTS_REORGANIZATION_PLAN.md`](walaris-cen/UI_COMPONENTS_REORGANIZATION_PLAN.md:1) - Original plan
-- [`CIRCULAR_DEPENDENCY_FIX.md`](walaris-cen/CIRCULAR_DEPENDENCY_FIX.md:1) - validation_config.py migration
-- [`UI_COMPONENTS_COMPREHENSIVE_ANALYSIS.md`](walaris-cen/UI_COMPONENTS_COMPREHENSIVE_ANALYSIS.md:1) - Initial analysis
+- [`UI_COMPONENTS_REORGANIZATION_PLAN.md`](uqlab-streamlit/UI_COMPONENTS_REORGANIZATION_PLAN.md:1) - Original plan
+- [`CIRCULAR_DEPENDENCY_FIX.md`](uqlab-streamlit/CIRCULAR_DEPENDENCY_FIX.md:1) - validation_config.py migration
+- [`UI_COMPONENTS_COMPREHENSIVE_ANALYSIS.md`](uqlab-streamlit/UI_COMPONENTS_COMPREHENSIVE_ANALYSIS.md:1) - Initial analysis
 
 ## Verification
 
@@ -177,7 +177,7 @@ To verify the reorganization:
 ls -R src/uqlab/ui_components/
 
 # Verify imports work (with PYTHONPATH)
-cd walaris-cen
+cd uqlab-streamlit
 PYTHONPATH=src python3 -c "from uqlab.ui_components.selectors import smart_experiment_selector; print('✅ Explicit import works')"
 PYTHONPATH=src python3 -c "from uqlab.ui_components import smart_experiment_selector; print('✅ Backward compatible import works')"
 ```
