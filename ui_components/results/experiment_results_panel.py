@@ -220,21 +220,21 @@ def render_experiment_results_panel(
                 n = status_counts.get(status, 0)
                 if n and st.button(f"Delete {n} {status}", key=f"{key_prefix}del_{status}"):
                     deleted = 0
-                for exp in experiments:
-                    if exp.get("status") != status:
-                        continue
-                    try:
-                        r = requests.delete(
-                            f"{api_base_url}/api/v1/experiments/no-auth/{exp['id']}",
-                            headers=get_headers_func(),
-                            timeout=10,
-                        )
-                        if r.status_code == 200:
-                            deleted += 1
-                    except Exception:
-                        pass
-                st.success(f"Deleted {deleted} {status} experiment(s)")
-                st.rerun()
+                    for exp in experiments:
+                        if exp.get("status") != status:
+                            continue
+                        try:
+                            r = requests.delete(
+                                f"{api_base_url}/api/v1/experiments/no-auth/{exp['id']}",
+                                headers=get_headers_func(),
+                                timeout=10,
+                            )
+                            if r.status_code == 200:
+                                deleted += 1
+                        except Exception:
+                            pass
+                    st.success(f"Deleted {deleted} {status} experiment(s)")
+                    st.rerun()
 
     st.markdown("---")
     st.markdown("### 🔬 Experiments & parameter sweeps")
