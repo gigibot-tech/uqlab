@@ -9,11 +9,11 @@ This script demonstrates how to:
 """
 
 import numpy as np
-from uqlab.benchmarks.data.cifar10 import (
+from uqlab.evaluation.benchmarks.data.cifar10 import (
     get_cifar10_dataset,
     get_cifar10_with_epistemic_manipulation
 )
-from uqlab.benchmarks.models.gaussian_logits import create_gaussian_logits_method
+from uqlab.evaluation.benchmarks.models.gaussian_logits import create_gaussian_logits_method
 
 
 def example_1_basic_training():
