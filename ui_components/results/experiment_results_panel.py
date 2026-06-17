@@ -202,17 +202,24 @@ def render_experiment_results_panel(
                 st.rerun()
 
     if ui_on("results_bulk_delete"):
-        st.markdown("---")
-        st.markdown("### 🗑️ Bulk delete")
+        # Count deletable experiments by status
         status_counts: Dict[str, int] = {}
         for exp in experiments:
             s = exp.get("status", "unknown")
             status_counts[s] = status_counts.get(s, 0) + 1
-
-        for status in ("failed", "running", "queued"):
-            n = status_counts.get(status, 0)
-            if n and st.button(f"Delete {n} {status}", key=f"{key_prefix}del_{status}"):
-                deleted = 0
+        
+        # Only show bulk delete section if there are deletable experiments
+        deletable_statuses = ("failed", "running", "queued")
+        total_deletable = sum(status_counts.get(status, 0) for status in deletable_statuses)
+        
+        if total_deletable > 0:
+            st.markdown("---")
+            st.markdown("### 🗑️ Bulk delete")
+            
+            for status in deletable_statuses:
+                n = status_counts.get(status, 0)
+                if n and st.button(f"Delete {n} {status}", key=f"{key_prefix}del_{status}"):
+                    deleted = 0
                 for exp in experiments:
                     if exp.get("status") != status:
                         continue
@@ -303,18 +310,5 @@ def render_experiment_results_panel(
                 render_training_data_stats(options[pick])
         else:
             st.caption("No training-data artifacts on disk yet.")
-
-    if ui_on("results_batch_ui"):
-        st.markdown("---")
-        with st.expander("📦 Legacy: Batch experiments (UI-created)", expanded=False):
-            st.caption("⚠️ **Legacy view** - Old batch experiment interface")
-            try:
-                from uqlab.ui_components.visualization.signals.signal_visualization import (
-                    render_batch_results,
-                )
-
-                render_batch_results(api_base_url, get_headers_func)
-            except Exception as exc:
-                st.warning(f"Batch results UI unavailable: {exc}")
 
     return _schedule_auto_refresh(enabled=auto_refresh, experiments=experiments) or auto_refresh
