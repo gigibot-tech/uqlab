@@ -16,6 +16,13 @@ from uuid import UUID
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
+def repository_root() -> Path:
+    """Checkout root (directory that contains ``src/``)."""
+    if _REPO_ROOT.name == "src":
+        return _REPO_ROOT.parent
+    return _REPO_ROOT
+
+
 def data_root() -> Path:
     """Root directory for DB, experiment outputs, and optional local artifacts."""
     raw = os.environ.get("UQLAB_DATA_DIR", "").strip()

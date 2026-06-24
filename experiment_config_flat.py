@@ -14,6 +14,48 @@ ALEATORIC_PARAM = "aleatoric_noise_percentage"
 EPISTEMIC_PARAM = "under_train_per_class"
 
 
+def flatten_dict(d: dict, parent_key: str = "", sep: str = ".") -> dict:
+    """
+    Flatten nested dictionary for easier comparison.
+
+    Example:
+        {'model': {'hidden_dim': 256}} -> {'model.hidden_dim': 256}
+    """
+    items: list[tuple[str, Any]] = []
+    for k, v in d.items():
+        new_key = f"{parent_key}{sep}{k}" if parent_key else k
+        if isinstance(v, dict):
+            items.extend(flatten_dict(v, new_key, sep=sep).items())
+        else:
+            items.append((new_key, v))
+    return dict(items)
+
+
+def find_config_differences(
+    config1: dict,
+    config2: dict,
+) -> list[tuple[str, Any, Any]]:
+    """
+    Find differences between two configs.
+
+    Returns:
+        List of (key, value1, value2) tuples for differing parameters.
+    """
+    flat1 = flatten_dict(config1)
+    flat2 = flatten_dict(config2)
+
+    differences: list[tuple[str, Any, Any]] = []
+    all_keys = set(flat1.keys()) | set(flat2.keys())
+
+    for key in all_keys:
+        val1 = flat1.get(key)
+        val2 = flat2.get(key)
+        if val1 != val2:
+            differences.append((key, val1, val2))
+
+    return differences
+
+
 def flatten_experiment_config(cfg: Any) -> dict[str, Any]:
     """Merge top-level keys with nested ``data`` / ``model`` / … sections."""
     if not cfg:

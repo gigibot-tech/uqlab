@@ -3,6 +3,8 @@ UI debug toggles for the progressive Streamlit app.
 
 Each toggle uses ``st.session_state["ui_debug__<key>"]`` as the checkbox widget key
 (single source of truth). Parent keys gate children automatically.
+
+Agent checklist: see ``.cursor/skills/ui-debug/SKILL.md``.
 """
 
 from __future__ import annotations
@@ -11,8 +13,8 @@ from typing import Dict, List, Optional, Tuple
 
 import streamlit as st
 
-UI_DEBUG_DEFAULTS_VERSION = 3
-UI_DEBUG_DEFAULTS_VERSION_KEY = "ui_debug_defaults_v3"
+UI_DEBUG_DEFAULTS_VERSION = 4
+UI_DEBUG_DEFAULTS_VERSION_KEY = "ui_debug_defaults_v4"
 
 # Results sub-toggles that stay off when results are enabled by default.
 RESULTS_DEFAULTS_OFF: frozenset[str] = frozenset({
@@ -29,16 +31,24 @@ UI_DEBUG_REGISTRY: Dict[str, Tuple[str, bool]] = {
     "page_title": ("Page title & caption", True),
     "step1_dataset": ("Step 1 · Dataset", True),
     "step2_training": ("Step 2 · Training", True),
+    "step2_5_checkpoint_arsenal": ("Step 2.5 · Checkpoint arsenal (optional)", True),
     "step3_uncertainty": ("Step 3 · Uncertainty", True),
     "step4_evaluation": ("Step 4 · Evaluation", True),
     "step5_launch": ("Step 5 · Review summary", True),
+    "step5_launch_cards": ("Step 5 · launch buttons", True),
+    "plot_probe_suggestions": ("Step 5 / Results · plot probe redo suggestions", True),
     "launch_result_banner": ("Launch result banner", True),
     "footer": ("Footer", True),
+    "signal_validation": ("Signal validation mode", True),
     # Sidebar (only rendered components)
-    "sidebar_paper_launch": ("Sidebar · paper sweep launch", True),
+    "sidebar_paper_launch": ("Sidebar · quick launch (same as Step 5)", True),
     "sidebar_debug_panel": ("Sidebar · debug panel", True),
     # Results — on by default except per-run details + training data
     "results_section": ("Results · entire section", True),
+    "results_live_status": ("Results · §1 live status", True),
+    "results_sweep_analysis": ("Results · §2 sweep analysis (3-line plots)", True),
+    "results_sweep_campaigns": ("Results · §3 campaign expanders", True),
+    "results_sweep_groups": ("Results · sweep groups (legacy parent)", True),
     "results_local_presets": ("Results · local preset sweeps", True),
     "results_local_viz": ("Results · local validation viz", True),
     "results_status_metrics": ("Footer · experiment status counts", True),
@@ -46,7 +56,7 @@ UI_DEBUG_REGISTRY: Dict[str, Tuple[str, bool]] = {
     "results_auto_refresh_ui": ("Results · auto-refresh controls", False),
     "results_auto_refresh_schedule": ("Results · 5s auto-rerun (JS)", False),
     "results_bulk_delete": ("Results · bulk delete", True),
-    "results_sweep_groups": ("Results · sweep groups (expanders + summary cards)", True),
+    "results_bulk_recover": ("Results · bulk recover", True),
     "results_standalone_table": ("Results · standalone table", True),
     "results_experiment_details": ("Results · per-run details + bar charts", False),
     "results_training_data": ("Results · training data inspection", False),
@@ -55,17 +65,23 @@ UI_DEBUG_REGISTRY: Dict[str, Tuple[str, bool]] = {
 
 # child -> parent (semantic tree)
 UI_DEBUG_PARENT: Dict[str, str] = {
+    "step5_launch_cards": "step5_launch",
+    "plot_probe_suggestions": "step5_launch",
+    "results_live_status": "results_section",
+    "results_sweep_analysis": "results_section",
+    "results_sweep_campaigns": "results_section",
+    "results_sweep_groups": "results_section",
     "results_local_presets": "results_section",
     "results_local_viz": "results_section",
-    "results_running_progress": "results_section",
-    "results_auto_refresh_ui": "results_section",
-    "results_auto_refresh_schedule": "results_section",
-    "results_bulk_delete": "results_section",
-    "results_sweep_groups": "results_section",
+    "results_running_progress": "results_live_status",
+    "results_auto_refresh_ui": "results_live_status",
+    "results_auto_refresh_schedule": "results_live_status",
+    "results_bulk_delete": "results_live_status",
+    "results_bulk_recover": "results_live_status",
     "results_standalone_table": "results_section",
     "results_training_data": "results_section",
     "results_batch_ui": "results_section",
-    "results_experiment_details": "results_sweep_groups",
+    "results_experiment_details": "results_sweep_campaigns",
     # results_status_metrics: independent footer toggle (still turned off by Results off)
 }
 
@@ -78,10 +94,14 @@ UI_DEBUG_SECTIONS: List[Tuple[str, List[str]]] = [
         "page_title",
         "step1_dataset",
         "step2_training",
+        "step2_5_checkpoint_arsenal",
         "step3_uncertainty",
         "step4_evaluation",
         "step5_launch",
+        "step5_launch_cards",
+        "plot_probe_suggestions",
         "launch_result_banner",
+        "signal_validation",
         "footer",
     ]),
     ("Sidebar", [
@@ -92,15 +112,19 @@ UI_DEBUG_SECTIONS: List[Tuple[str, List[str]]] = [
         "Results (per-run details & training data off by default)",
         [
             "results_section",
-            "results_status_metrics",
+            "results_live_status",
             "results_running_progress",
             "results_auto_refresh_ui",
             "results_auto_refresh_schedule",
             "results_bulk_delete",
+            "results_bulk_recover",
+            "results_sweep_analysis",
+            "results_sweep_campaigns",
             "results_sweep_groups",
             "results_standalone_table",
             "results_experiment_details",
             "results_training_data",
+            "results_status_metrics",
             "results_batch_ui",
             "results_local_presets",
             "results_local_viz",
@@ -169,24 +193,20 @@ def _cascade_disable(parent_key: str) -> None:
 def _apply_parent_cascade_rules() -> None:
     """If a parent is off, force all descendants off before widgets render."""
     from streamlit.runtime.state import get_session_state
-    
+
     for parent_key in UI_DEBUG_CHILDREN:
         if not _enabled_raw(parent_key):
             for desc in _descendants(parent_key):
                 wkey = widget_key(desc)
-                # Only modify if not already associated with a widget
-                # (Streamlit raises error if you modify widget state after widget creation)
                 try:
                     session_state = get_session_state()
                     if wkey not in session_state._new_widget_state:
                         st.session_state[wkey] = False
-                except:
-                    # Fallback: just skip if we can't safely modify
+                except Exception:
                     pass
 
 
 def init_ui_debug() -> None:
-    # Drop legacy broken dict from older debug implementations
     if "ui_debug" in st.session_state and not isinstance(
         st.session_state.get("ui_debug"), dict
     ):
@@ -208,6 +228,10 @@ def init_ui_debug() -> None:
 
     if migrated_version != UI_DEBUG_DEFAULTS_VERSION:
         _apply_results_defaults()
+        st.session_state[widget_key("step5_launch_cards")] = True
+        st.session_state[widget_key("results_live_status")] = True
+        st.session_state[widget_key("results_sweep_analysis")] = True
+        st.session_state[widget_key("results_sweep_campaigns")] = True
         st.session_state[UI_DEBUG_DEFAULTS_VERSION_KEY] = UI_DEBUG_DEFAULTS_VERSION
 
     _apply_parent_cascade_rules()
@@ -338,3 +362,4 @@ def render_ui_debug_panel(*, in_sidebar: bool = True) -> None:
                     _render_debug_checkbox(key, label)
 
         sync_results_auto_refresh()
+

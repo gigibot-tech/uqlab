@@ -119,6 +119,7 @@ def map_attribution_structure_to_uncertainty(
         "coherence": coherence,
         "inverse_coherence": inv_coh,
         "inverse_mass": reciprocal_uncertainty(signals["mass"], eps=eps),
+        "inverse_dominance": (1.0 - signals["dominance"].clamp(0.0, 1.0)).float(),
         "dominance": signals["dominance"],
         "label_disagreement": signals["label_disagreement"],
         "noisy_support_ratio": signals["noisy_support_ratio"],
@@ -139,39 +140,60 @@ def map_mc_dropout_to_predictive_signals(
     }
 
 
-def build_fast_pilot_signal_table(
+def build_experiment_signal_table(
     *,
     attribution_signals: Dict[str, torch.Tensor],
-    logit_magnitude: torch.Tensor,
+    det_logits: torch.Tensor | None = None,
+    mean_pred_det: torch.Tensor | None = None,
     mc_uq: Dict[str, torch.Tensor] | None = None,
+    enabled: set[str] | None = None,
+    dropout: float = 0.0,
+    mc_passes: int = 10,
+    eps: float = DEFAULT_MASS_EPS,
+    # Legacy kwargs (tests / older callers)
+    logit_magnitude: torch.Tensor | None = None,
     predictive_entropy: torch.Tensor | None = None,
     mutual_info: torch.Tensor | None = None,
     mean_prediction: torch.Tensor | None = None,
-    eps: float = DEFAULT_MASS_EPS,
 ) -> Dict[str, torch.Tensor]:
     """
     Canonical ``signal_table`` for ``run_fast_uncertainty_classification`` /
     validation sweeps (single source of truth for exported columns).
     """
-    if mc_uq is not None:
-        predictive = map_mc_dropout_to_predictive_signals(mc_uq)
-    else:
+    from uqlab.evaluation.signals.registry import (
+        build_signal_table_from_store,
+        legacy_store_from_kwargs,
+    )
+
+    if mc_uq is None:
         if mean_prediction is None or predictive_entropy is None or mutual_info is None:
             raise ValueError("Provide mc_uq or all of mean_prediction, predictive_entropy, mutual_info")
-        predictive = {
-            "msp_uncertainty": 1.0 - mean_prediction.max(dim=1).values,
-            "predictive_entropy": predictive_entropy,
+        mc_uq = {
+            "mean_prediction": mean_prediction,
+            "entropy": predictive_entropy,
             "mutual_info": mutual_info,
         }
-    attr = map_attribution_structure_to_uncertainty(attribution_signals, eps=eps)
-    return {
-        **predictive,
-        "coherence": attr["coherence"],
-        "inverse_coherence": attr["inverse_coherence"],
-        "dominance": attr["dominance"],
-        "inverse_mass": attr["inverse_mass"],
-        "inverse_logit_magnitude": reciprocal_uncertainty(logit_magnitude, eps=eps),
-    }
+
+    if det_logits is None or mean_pred_det is None:
+        if logit_magnitude is None:
+            raise ValueError("Provide det_logits and mean_pred_det, or legacy logit_magnitude")
+        n = int(logit_magnitude.shape[0])
+        det_logits = logit_magnitude.unsqueeze(1).expand(n, 10)
+        mean_pred_det = torch.zeros(n, 10)
+        mean_pred_det[:, 0] = 1.0
+
+    store = legacy_store_from_kwargs(
+        attribution_signals=attribution_signals,
+        det_logits=det_logits,
+        mean_pred_det=mean_pred_det,
+        mc_uq=mc_uq,
+    )
+    return build_signal_table_from_store(
+        store,
+        enabled=enabled,
+        mc_passes=mc_passes,
+        dropout=dropout,
+    )
 
 
 def normalized_entropy_from_labels(labels: torch.Tensor, num_classes: int) -> float:

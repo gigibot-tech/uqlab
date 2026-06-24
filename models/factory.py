@@ -21,12 +21,13 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torchvision import models
 
+from uqlab.models.architecture import normalize_architecture, scope_to_training_mode
 from uqlab.shared.config.classification import ModelConfig
 
-from .classification_models import EmbeddingDropoutMLP
+from .classification_models import EmbeddingDropoutMLP, EmbeddingMLP
 
 
-class CNNMCDropout(nn.Module):
+class SmallCNN(nn.Module):
     """
     CNN with MC Dropout for end-to-end training.
     
@@ -121,14 +122,80 @@ class CNNMCDropout(nn.Module):
         sample_batch_size: int = 256,
     ) -> torch.Tensor:
         """MC Dropout; backbone features computed once per sample chunk."""
-        from uqlab.mc_dropout_uq import mc_forward_efficient
+        from uqlab.models.mc_dropout import mc_forward_efficient
 
         return mc_forward_efficient(
             self, x, n_passes, sample_batch_size=sample_batch_size
         )
 
 
-class ResNet18MCDropout(nn.Module):
+class PixelMLP(nn.Module):
+    """
+    Small fully-connected MLP on raw flattened pixels for end-to-end training.
+
+    flatten(pixels) -> Linear(hidden) -> ReLU -> Dropout -> Linear(num_classes)
+
+    Features:
+    - MC Dropout for uncertainty estimation (dropout before the classifier)
+    - ``extract_features`` from the hidden layer for attribution (DualXDA-compatible)
+    - Lazy first layer so it adapts to any input image size / channel count
+      (e.g. 3×32×32 CIFAR or 3×32×32 MNIST/Fashion-MNIST after transforms)
+
+    Args:
+        num_classes: Number of output classes
+        hidden_dim: Hidden layer dimension
+        dropout: Dropout probability
+    """
+
+    def __init__(
+        self,
+        num_classes: int = 10,
+        hidden_dim: int = 256,
+        dropout: float = 0.3,
+    ):
+        super().__init__()
+        self.flatten = nn.Flatten()
+        # Lazy: infers in_features from the first batch (image size agnostic).
+        self.fc_features = nn.LazyLinear(hidden_dim)
+        self.dropout = nn.Dropout(p=dropout)
+        self.classifier = nn.Linear(hidden_dim, num_classes)
+        self.dropout_rate = dropout
+        self.hidden_dim = hidden_dim
+
+    def extract_features(self, x: torch.Tensor) -> torch.Tensor:
+        """Flatten pixels and project to the hidden feature space [B, hidden_dim]."""
+        h = self.flatten(x)
+        return F.relu(self.fc_features(h))
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        features = self.extract_features(x)
+        if self.training:
+            features = self.dropout(features)
+        return self.classifier(features)
+
+    def enable_dropout(self) -> None:
+        """Enable dropout layers for MC Dropout inference."""
+        for module in self.modules():
+            if isinstance(module, nn.Dropout):
+                module.train()
+
+    @torch.no_grad()
+    def mc_forward(
+        self,
+        x: torch.Tensor,
+        n_passes: int = 20,
+        *,
+        sample_batch_size: int = 256,
+    ) -> torch.Tensor:
+        """MC Dropout; hidden features computed once per sample chunk."""
+        from uqlab.models.mc_dropout import mc_forward_efficient
+
+        return mc_forward_efficient(
+            self, x, n_passes, sample_batch_size=sample_batch_size
+        )
+
+
+class ResNet18Classifier(nn.Module):
     """
     ResNet18 with MC Dropout for both end-to-end and feature-space training.
     
@@ -227,7 +294,7 @@ class ResNet18MCDropout(nn.Module):
         sample_batch_size: int = 256,
     ) -> torch.Tensor:
         """MC Dropout; backbone features computed once per sample chunk."""
-        from uqlab.mc_dropout_uq import mc_forward_efficient
+        from uqlab.models.mc_dropout import mc_forward_efficient
 
         return mc_forward_efficient(
             self, x, n_passes, sample_batch_size=sample_batch_size
@@ -272,63 +339,47 @@ def build_model(
         >>> config = ModelConfig(architecture="resnet18_mcdropout", dropout=0.3)
         >>> model = build_model(config, num_classes=10)
     """
-    if config.architecture == "dinov2_mlp":
-        # Feature-space model: DINOv2 embeddings + MLP
+    canonical = normalize_architecture(config.architecture)
+    training_mode = scope_to_training_mode(canonical, config.training_scope)
+
+    if canonical == "dinov2_mlp":
         if feature_dim is None:
             raise ValueError(
                 "feature_dim is required for dinov2_mlp architecture. "
                 "This should be the dimensionality of DINOv2 embeddings (e.g., 768)."
             )
-        
-        if config.training_mode != "feature_space":
-            raise ValueError(
-                f"dinov2_mlp only supports feature_space training mode, "
-                f"got: {config.training_mode}"
-            )
-        
-        return EmbeddingDropoutMLP(
+        return EmbeddingMLP(
             input_dim=feature_dim,
             num_classes=num_classes,
             hidden_dim=config.hidden_dim,
             dropout=config.dropout,
         )
-    
-    elif config.architecture == "cnn_mcdropout":
-        # End-to-end CNN with MC Dropout
-        if config.training_mode != "end_to_end":
-            raise ValueError(
-                f"cnn_mcdropout requires end_to_end training mode, "
-                f"got: {config.training_mode}"
-            )
-        
-        return CNNMCDropout(
+
+    if canonical == "cnn_small":
+        if training_mode != "end_to_end":
+            raise ValueError("cnn_small requires training_scope=full")
+        return SmallCNN(num_classes=num_classes, dropout=config.dropout)
+
+    if canonical == "pixel_mlp":
+        if training_mode != "end_to_end":
+            raise ValueError("pixel_mlp requires training_scope=full")
+        return PixelMLP(
             num_classes=num_classes,
+            hidden_dim=config.hidden_dim,
             dropout=config.dropout,
         )
-    
-    elif config.architecture == "resnet18_mcdropout":
-        # ResNet18 with MC Dropout - supports both training modes
-        # - feature_space: Frozen backbone (like DINOv2), train only classifier
-        # - end_to_end: Train entire network including backbone
-        
-        # Use pretrained weights if not explicitly disabled
+
+    if canonical == "resnet18":
         pretrained = not config.use_untrained_resnet
-        
-        # Determine if backbone should be frozen
-        freeze_backbone = (config.training_mode == "feature_space")
-        
-        return ResNet18MCDropout(
+        freeze_backbone = config.training_scope in ("head_only", "feature_space")
+        return ResNet18Classifier(
             num_classes=num_classes,
             dropout=config.dropout,
             pretrained=pretrained,
             freeze_backbone=freeze_backbone,
         )
-    
-    else:
-        raise ValueError(
-            f"Unknown architecture: {config.architecture}. "
-            f"Supported architectures: dinov2_mlp, cnn_mcdropout, resnet18_mcdropout"
-        )
+
+    raise ValueError(f"Unknown architecture: {config.architecture}")
 
 
 # Convenience functions for direct instantiation
@@ -378,23 +429,18 @@ def build_cnn_mcdropout(
     )
 
 
+# Backward-compatible aliases (legacy names)
+CNNMCDropout = SmallCNN
+ResNet18MCDropout = ResNet18Classifier
+
+
 def build_resnet18_mcdropout(
     num_classes: int = 10,
     dropout: float = 0.3,
     pretrained: bool = False,
-) -> ResNet18MCDropout:
-    """
-    Build ResNet18 with MC Dropout for end-to-end training.
-    
-    Args:
-        num_classes: Number of output classes
-        dropout: Dropout probability
-        pretrained: Use ImageNet pretrained weights
-        
-    Returns:
-        ResNet18MCDropout model
-    """
-    return ResNet18MCDropout(
+) -> ResNet18Classifier:
+    """Legacy helper — prefer ``build_model``."""
+    return ResNet18Classifier(
         num_classes=num_classes,
         dropout=dropout,
         pretrained=pretrained,

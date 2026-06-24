@@ -4,6 +4,7 @@ Single place to read outputs from one ``run_fast_uncertainty_classification`` ru
 Every run folder should contain (when successful):
 
 - ``summary.json`` — eval sizes, one-vs-rest AUROC, config
+- ``experiment.log`` — full stdout/stderr from the run (via ``runner.pipeline``)
 - ``per_sample_signals.csv`` — one row per eval sample (group, dataset_index, labels, signals)
 - ``results.pt`` — full tensors (optional duplicate of the same evaluation)
 
@@ -14,26 +15,51 @@ when building ``metrics.csv`` rows.
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import pandas as pd
 
-GROUP_CLEAN, GROUP_ALEATORIC, GROUP_EPISTEMIC = 0, 1, 2
+GROUP_CLEAN, GROUP_ALEATORIC, GROUP_EPISTEMIC, GROUP_OOD = 0, 1, 2, 3
 
-# Columns in ``per_sample_signals.csv`` / ``build_fast_pilot_signal_table``.
-FAST_PILOT_SIGNAL_NAMES: tuple[str, ...] = (
-    "msp_uncertainty",
-    "predictive_entropy",
-    "mutual_info",
-    "coherence",
-    "inverse_coherence",
-    "dominance",
-    "inverse_mass",
-    "inverse_logit_magnitude",
-)
-_EVAL_PACK_TAGS = ("epistemic", "aleatoric", "clean")
+# Columns in ``per_sample_signals.csv`` / ``build_experiment_signal_table``.
+from uqlab.evaluation.signals.catalog import signal_names
+
+FAST_PILOT_SIGNAL_NAMES: tuple[str, ...] = tuple(signal_names())
+_EVAL_PACK_TAGS = ("epistemic", "aleatoric", "clean", "ood")
+
+
+def _optional_auroc(source: dict[str, Any], *keys: str) -> float:
+    """AUROC value or ``nan`` when skipped / missing (JSON null, empty pool, etc.)."""
+    for key in keys:
+        if key not in source:
+            continue
+        val = source[key]
+        if val is None:
+            return math.nan
+        try:
+            f = float(val)
+            if f == f:  # not NaN
+                return f
+        except (TypeError, ValueError):
+            continue
+    return math.nan
+
+
+def _coalesce_float(source: dict[str, Any], *keys: str, default: float = 0.0) -> float:
+    """First non-null, numeric value among *keys*, else *default*."""
+    for key in keys:
+        if key not in source or source[key] is None:
+            continue
+        try:
+            value = float(source[key])
+            if value == value:  # not NaN
+                return value
+        except (TypeError, ValueError):
+            continue
+    return default
 
 
 @dataclass(frozen=True)
@@ -42,6 +68,7 @@ class RunArtifacts:
 
     run_dir: Path
     summary_path: Path | None
+    experiment_log_path: Path | None
     per_sample_path: Path | None
     results_pt_path: Path | None
     eval_sizes: dict[str, int] = field(default_factory=dict)
@@ -54,17 +81,27 @@ class RunArtifacts:
         return self.source != "none"
 
     def auroc_by_signal(self) -> dict[str, dict[str, float]]:
-        """``{signal: {"aleatoric": float, "epistemic": float}}``."""
+        """``{signal: {"aleatoric": float, "epistemic": float, "ood": float}}``."""
         out: dict[str, dict[str, float]] = {}
         for row in self.one_vs_rest_auroc:
             name = row.get("signal")
             if not name:
                 continue
             out[str(name)] = {
-                "aleatoric": float(row.get("aleatoric_like_auroc", row.get("aleatoric_auroc", 0))),
-                "epistemic": float(row.get("epistemic_like_auroc", row.get("epistemic_auroc", 0))),
+                "aleatoric": _optional_auroc(
+                    row, "aleatoric_like_auroc", "aleatoric_auroc"
+                ),
+                "epistemic": _optional_auroc(
+                    row, "epistemic_like_auroc", "epistemic_auroc"
+                ),
+                "ood": _optional_auroc(row, "ood_like_auroc", "ood_auroc"),
             }
         return out
+
+
+def _experiment_log_path(run_dir: Path) -> Path | None:
+    path = run_dir / "experiment.log"
+    return path if path.is_file() else None
 
 
 def load_run_directory(run_dir: Path) -> RunArtifacts:
@@ -85,6 +122,7 @@ def load_run_directory(run_dir: Path) -> RunArtifacts:
         return RunArtifacts(
             run_dir=run_dir,
             summary_path=summary_path,
+            experiment_log_path=_experiment_log_path(run_dir),
             per_sample_path=per_sample_path if per_sample_path.is_file() else None,
             results_pt_path=results_pt_path if results_pt_path.is_file() else None,
             eval_sizes=dict(summary.get("eval_sizes") or {}),
@@ -101,6 +139,7 @@ def load_run_directory(run_dir: Path) -> RunArtifacts:
     return RunArtifacts(
         run_dir=run_dir,
         summary_path=None,
+        experiment_log_path=_experiment_log_path(run_dir),
         per_sample_path=per_sample_path if per_sample_path.is_file() else None,
         results_pt_path=None,
         source="none",
@@ -118,16 +157,27 @@ def _artifacts_from_results_pt(
     data = torch.load(results_pt_path, map_location="cpu", weights_only=False)
     one_vs_rest: list[dict[str, Any]] = []
     if "auroc_rows" in data:
-        for signal_name, alea_auc, epis_auc in data["auroc_rows"]:
-            alea_val = float(alea_auc.item() if hasattr(alea_auc, "item") else alea_auc)
-            epis_val = float(epis_auc.item() if hasattr(epis_auc, "item") else epis_auc)
-            one_vs_rest.append(
-                {
-                    "signal": signal_name,
-                    "aleatoric_like_auroc": alea_val,
-                    "epistemic_like_auroc": epis_val,
-                }
-            )
+        for row in data["auroc_rows"]:
+            if isinstance(row, dict):
+                signal_name = row.get("signal")
+                alea_val = row.get("aleatoric_auroc", row.get("aleatoric_like_auroc"))
+                epis_val = row.get("epistemic_auroc", row.get("epistemic_like_auroc"))
+                ood_val = row.get("ood_auroc", row.get("ood_like_auroc"))
+            else:
+                signal_name, alea_val, epis_val = row[:3]
+                ood_val = row[3] if len(row) > 3 else None
+            alea_val = float(alea_val.item() if hasattr(alea_val, "item") else alea_val) if alea_val is not None else math.nan
+            epis_val = float(epis_val.item() if hasattr(epis_val, "item") else epis_val) if epis_val is not None else math.nan
+            entry: dict[str, Any] = {
+                "signal": signal_name,
+                "aleatoric_like_auroc": alea_val,
+                "epistemic_like_auroc": epis_val,
+            }
+            if ood_val is not None:
+                entry["ood_like_auroc"] = float(
+                    ood_val.item() if hasattr(ood_val, "item") else ood_val
+                )
+            one_vs_rest.append(entry)
 
     eval_sizes: dict[str, int] = {}
     if "eval_group_labels" in data:
@@ -141,11 +191,13 @@ def _artifacts_from_results_pt(
             "clean": int((labels == GROUP_CLEAN).sum()),
             "aleatoric_like": int((labels == GROUP_ALEATORIC).sum()),
             "epistemic_like": int((labels == GROUP_EPISTEMIC).sum()),
+            "ood_like": int((labels == GROUP_OOD).sum()),
         }
 
     return RunArtifacts(
         run_dir=run_dir,
         summary_path=summary_path if summary_path.is_file() else None,
+        experiment_log_path=_experiment_log_path(run_dir),
         per_sample_path=per_sample_path if per_sample_path.is_file() else None,
         results_pt_path=results_pt_path,
         eval_sizes=eval_sizes,
@@ -177,8 +229,14 @@ def metrics_row_from_run(run_dir: Path) -> dict[str, Any]:
     metrics: dict[str, Any] = {}
 
     for signal, scores in artifacts.auroc_by_signal().items():
-        metrics[f"{signal}_aleatoric_auroc"] = scores["aleatoric"]
-        metrics[f"{signal}_epistemic_auroc"] = scores["epistemic"]
+        for pack, key_suffix in (
+            ("aleatoric", "aleatoric_auroc"),
+            ("epistemic", "epistemic_auroc"),
+            ("ood", "ood_auroc"),
+        ):
+            val = scores[pack]
+            if val == val:  # not NaN
+                metrics[f"{signal}_{key_suffix}"] = val
 
     results_pt = run_dir / "results.pt"
     if results_pt.is_file():
@@ -247,10 +305,14 @@ def format_run_metrics_console_lines(metrics: dict[str, Any]) -> list[str]:
     for signal in FAST_PILOT_SIGNAL_NAMES:
         alea = _metric_float(metrics, f"{signal}_aleatoric_auroc")
         epis = _metric_float(metrics, f"{signal}_epistemic_auroc")
-        if alea is not None or epis is not None:
+        ood = _metric_float(metrics, f"{signal}_ood_auroc")
+        if alea is not None or epis is not None or ood is not None:
             a = f"{alea:.4f}" if alea is not None else "—"
             e = f"{epis:.4f}" if epis is not None else "—"
-            auroc_lines.append(f"   {signal}: aleatoric_auroc={a}, epistemic_auroc={e}")
+            o = f"{ood:.4f}" if ood is not None else "—"
+            auroc_lines.append(
+                f"   {signal}: aleatoric_auroc={a}, epistemic_auroc={e}, ood_auroc={o}"
+            )
     if auroc_lines:
         lines.append("   --- AUROC (one-vs-rest on eval packs) ---")
         lines.extend(auroc_lines)
@@ -372,18 +434,46 @@ def _results_pt_keys(path: Path) -> set[str]:
 
 
 def _signal_means_from_results_pt(results_pt: Path) -> dict[str, float]:
-    """Extract ``<signal>_mean*`` columns (same logic as validation rebuild)."""
+    """
+    Extract per-signal means, FILTERED BY EVALUATION POOL.
+    
+    This function performs the critical "pool filtering" step that creates
+    separate uncertainty curves for different evaluation groups in sweep plots.
+    
+    Input (from results.pt):
+        - signal_table: dict[signal_name → tensor[N_samples]]
+          Example: {"mutual_info": [0.15, 0.23, 0.08, 0.12, ...]}
+        - eval_group_labels: tensor[N_samples] with values 0, 1, or 2
+          Example: [GROUP_EPISTEMIC, GROUP_EPISTEMIC, GROUP_ALEATORIC, GROUP_CLEAN, ...]
+    
+    Output:
+        - Dict with overall means AND pool-filtered means:
+          {
+            "mutual_info_mean": 0.18,  # Mean across ALL samples
+            "mutual_info_mean_epistemic": 0.25,  # Mean of epistemic samples ONLY
+            "mutual_info_mean_aleatoric": 0.075, # Mean of aleatoric samples ONLY
+            "mutual_info_mean_clean": 0.12,      # Mean of clean samples ONLY
+            ...
+          }
+    
+    These pool-filtered means become the Y-values in the three-line sweep plot!
+    See POOL_FILTERED_SWEEP_PLOT_DATA_FLOW.md for complete explanation.
+    """
     import numpy as np
     import torch
 
+    # Load saved evaluation results
     data = torch.load(results_pt, map_location="cpu", weights_only=False)
     if "signal_table" not in data:
         return {}
 
+    # Extract signal_table: dict or DataFrame with per-sample uncertainty values
     signal_table = data["signal_table"]
     if hasattr(signal_table, "columns"):
+        # DataFrame format: convert to dict of numpy arrays
         signal_iter = {name: signal_table[name].to_numpy() for name in signal_table.columns}
     elif isinstance(signal_table, dict):
+        # Dict format: ensure all values are numpy arrays
         signal_iter = {}
         for name, values in signal_table.items():
             if hasattr(values, "cpu"):
@@ -392,6 +482,8 @@ def _signal_means_from_results_pt(results_pt: Path) -> dict[str, float]:
     else:
         return {}
 
+    # Extract eval_group_labels: which pool does each sample belong to?
+    # GROUP_CLEAN = 0, GROUP_ALEATORIC = 1, GROUP_EPISTEMIC = 2
     group_labels = data.get("eval_group_labels")
     if group_labels is not None and hasattr(group_labels, "cpu"):
         group_labels = group_labels.cpu().numpy()
@@ -399,19 +491,37 @@ def _signal_means_from_results_pt(results_pt: Path) -> dict[str, float]:
         group_labels = np.asarray(group_labels)
 
     metrics: dict[str, float] = {}
+    
+    # For each uncertainty signal (mutual_info, predictive_entropy, etc.)...
     for name, values in signal_iter.items():
         if values is None or len(values) == 0:
             continue
+        
+        # Compute OVERALL mean (all samples, no filtering)
         metrics[f"{name}_mean"] = float(np.nanmean(values))
+        
+        # ========== POOL FILTERING: Compute separate means per evaluation group ==========
+        # This is what creates the separate lines in the sweep plot!
+        
         if group_labels is not None and group_labels.shape == values.shape:
             for tag, code in (
                 ("epistemic", GROUP_EPISTEMIC),
                 ("aleatoric", GROUP_ALEATORIC),
                 ("clean", GROUP_CLEAN),
+                ("ood", GROUP_OOD),
             ):
+                # Create boolean mask: True for samples in this pool, False otherwise
                 mask = group_labels == code
+                
+                # Only compute mean if this pool has at least one sample
                 if mask.any():
-                    metrics[f"{name}_mean_{tag}"] = float(np.nanmean(values[mask]))
+                    # Filter values to ONLY this pool's samples and compute mean
+                    pool_values = values[mask]
+                    metrics[f"{name}_mean_{tag}"] = float(np.nanmean(pool_values))
+                    
+                    # Example:
+                    # If values = [0.15, 0.23, 0.08, 0.12] and mask = [True, True, False, False]
+                    # Then pool_values = [0.15, 0.23] and mean = 0.19
 
     # Row-1 plot proxies: mean_total_* aliases for notebooks; values are MC-dropout signals.
     # total = predictive_entropy, epistemic = mutual_info, aleatoric = total − epistemic.

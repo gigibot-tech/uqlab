@@ -181,20 +181,18 @@ class WorkflowEvaluationConfig(BaseModel):
     @classmethod
     def validate_signals(cls, v: List[str]) -> List[str]:
         """Validate signal names."""
-        valid_signals = [
-            "inverse_mass",
-            "dominance",
-            "inverse_logit_magnitude",
-            "inverse_coherence",
-            "msp_uncertainty",
-            "predictive_entropy",
+        from uqlab.evaluation.signals.catalog import SIGNAL_ID_ALIASES, METRIC_META, normalize_signal_id
+
+        valid_signals = set(METRIC_META.keys()) | set(SIGNAL_ID_ALIASES.keys()) | {
             "epistemic_entropy",
             "aleatoric_entropy",
-        ]
+        }
         for signal in v:
             if signal not in valid_signals:
-                raise ValueError(f"Unknown signal: {signal}. Valid: {valid_signals}")
-        return v
+                raise ValueError(
+                    f"Unknown signal: {signal}. Valid: {sorted(valid_signals)}"
+                )
+        return [normalize_signal_id(s) for s in v]
 
 
 class WorkflowConfig(BaseModel):

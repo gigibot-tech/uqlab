@@ -137,6 +137,7 @@ class EvaluationConfig:
     mc_passes: int = 20
     top_k: int = 10
     attribution_method: str = "dualxda"
+    attribution_backends: list[str] | None = None
     
     def validate(self) -> None:
         """Validate evaluation configuration."""
@@ -146,12 +147,18 @@ class EvaluationConfig:
         if self.top_k <= 0:
             raise ValueError(f"top_k must be > 0, got {self.top_k}")
         
-        valid_methods = ["dualxda"]
+        valid_methods = ["dualxda", "ek_fak", "graddot"]
         if self.attribution_method not in valid_methods:
             raise ValueError(
                 f"Invalid attribution_method: {self.attribution_method}. "
                 f"Must be one of {valid_methods}"
             )
+        if self.attribution_backends:
+            invalid = [b for b in self.attribution_backends if b not in valid_methods]
+            if invalid:
+                raise ValueError(
+                    f"Invalid attribution_backends: {invalid}. Must be subset of {valid_methods}"
+                )
 
 
 @dataclass

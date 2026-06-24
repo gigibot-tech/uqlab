@@ -1,431 +1,390 @@
 """
-Evaluation Metrics - Comprehensive metrics for uncertainty quantification.
+Evaluation metrics for uncertainty classification (pure computation).
 
-This module provides:
-- Classification metrics (accuracy, precision, recall, F1)
-- Uncertainty metrics (AUROC, UDE, ECE, Brier score)
-- Calibration metrics
-- Confusion matrix utilities
+Provides:
+- Binary AUROC computation
+- Confusion matrix and macro-F1 score
+- 3-way signal classifier training
+
+File/format output lives in :mod:`uqlab.evaluation.artifacts`.
 """
 
 from __future__ import annotations
 
-from typing import Dict, Optional, Tuple
+from typing import Dict, List, Tuple
 
 import numpy as np
 import torch
-from numpy.typing import NDArray
-from sklearn.metrics import (
-    accuracy_score,
-    confusion_matrix,
-    f1_score,
-    precision_score,
-    recall_score,
-    roc_auc_score,
-)
-
-from shared.types import FloatArray, LabelArray, MetricsDict
-from shared.utils import to_numpy
+import torch.nn as nn
 
 
-class MetricsCalculator:
+def binary_auroc(scores: torch.Tensor, positives: torch.Tensor) -> float:
+    """AUROC: does a higher score rank positive samples above negatives? NaN if only one class."""
+    scores = scores.flatten().float()
+    positives = positives.flatten().bool()
+    pos_scores = scores[positives]
+    neg_scores = scores[~positives]
+    if pos_scores.numel() == 0 or neg_scores.numel() == 0:
+        return float("nan")
+    pairwise = (pos_scores[:, None] > neg_scores[None, :]).float()
+    ties = (pos_scores[:, None] == neg_scores[None, :]).float() * 0.5
+    return float((pairwise + ties).mean().item())
+
+
+def binary_auroc_or_none(scores: torch.Tensor, positives: torch.Tensor) -> float | None:
+    """Same as binary_auroc; returns None when either class is missing (AUROC undefined)."""
+    positives = positives.flatten().bool()
+    if positives.sum().item() == 0 or (~positives).sum().item() == 0:
+        return None
+    value = binary_auroc(scores, positives)
+    if value != value:
+        return None
+    return value
+
+
+def auroc_skip_reason(n_pos: int, n_neg: int, *, axis: str = "aleatoric") -> str | None:
+    """Why AUROC was skipped: eval pool had only one class for this axis (e.g. no noisy samples)."""
+    if n_pos == 0:
+        return f"no {axis} positive samples"
+    if n_neg == 0:
+        return f"no {axis} negative samples"
+    return None
+
+
+def binary_auroc_vs_group(
+    scores: torch.Tensor,
+    group_labels: torch.Tensor,
+    *,
+    positive_group: int,
+    negative_group: int,
+) -> float | None:
+    """AUROC with positives from *positive_group* and negatives from *negative_group* only."""
+    group_labels = group_labels.flatten().long()
+    pos = group_labels == positive_group
+    neg = group_labels == negative_group
+    if pos.sum().item() == 0 or neg.sum().item() == 0:
+        return None
+    mask = pos | neg
+    return binary_auroc_or_none(scores.flatten()[mask], pos[mask])
+
+
+def confusion_matrix(num_classes: int, y_true: torch.Tensor, y_pred: torch.Tensor) -> torch.Tensor:
     """
-    Calculator for evaluation metrics.
-    
-    Provides methods for computing:
-    - Classification metrics
-    - Uncertainty metrics
-    - Calibration metrics
-    """
-    
-    def __init__(self, num_classes: int = 10):
-        """
-        Initialize metrics calculator.
-        
-        Args:
-            num_classes: Number of classes
-        """
-        self.num_classes = num_classes
-    
-    def calculate_accuracy(
-        self,
-        predictions: LabelArray,
-        targets: LabelArray,
-    ) -> float:
-        """
-        Calculate classification accuracy.
-        
-        Args:
-            predictions: Predicted labels
-            targets: True labels
-        
-        Returns:
-            Accuracy score
-        """
-        return float(accuracy_score(targets, predictions))
-    
-    def calculate_precision_recall_f1(
-        self,
-        predictions: LabelArray,
-        targets: LabelArray,
-        average: str = "macro",
-    ) -> Dict[str, float]:
-        """
-        Calculate precision, recall, and F1 score.
-        
-        Args:
-            predictions: Predicted labels
-            targets: True labels
-            average: Averaging strategy ('micro', 'macro', 'weighted')
-        
-        Returns:
-            Dictionary with precision, recall, and F1 scores
-        """
-        precision = precision_score(targets, predictions, average=average, zero_division=0)
-        recall = recall_score(targets, predictions, average=average, zero_division=0)
-        f1 = f1_score(targets, predictions, average=average, zero_division=0)
-        
-        return {
-            "precision": float(precision),
-            "recall": float(recall),
-            "f1_score": float(f1),
-        }
-    
-    def calculate_confusion_matrix(
-        self,
-        predictions: LabelArray,
-        targets: LabelArray,
-        normalize: Optional[str] = None,
-    ) -> NDArray:
-        """
-        Calculate confusion matrix.
-        
-        Args:
-            predictions: Predicted labels
-            targets: True labels
-            normalize: Normalization mode ('true', 'pred', 'all', or None)
-        
-        Returns:
-            Confusion matrix
-        """
-        cm = confusion_matrix(targets, predictions, labels=range(self.num_classes))
-        
-        if normalize == "true":
-            cm = cm.astype('float') / cm.sum(axis=1, keepdims=True)
-        elif normalize == "pred":
-            cm = cm.astype('float') / cm.sum(axis=0, keepdims=True)
-        elif normalize == "all":
-            cm = cm.astype('float') / cm.sum()
-        
-        return cm
-    
-    def calculate_auroc(
-        self,
-        uncertainties: FloatArray,
-        is_correct: NDArray[np.bool_],
-        use_correct_as_positive: bool = False,
-    ) -> float:
-        """
-        Calculate AUROC for uncertainty quantification.
-        
-        Args:
-            uncertainties: Uncertainty scores
-            is_correct: Boolean array indicating correct predictions
-            use_correct_as_positive: If True, correct predictions are positive class
-        
-        Returns:
-            AUROC score
-        """
-        if use_correct_as_positive:
-            # Correct predictions should have low uncertainty
-            labels = is_correct.astype(int)
-            scores = -uncertainties  # Negate so low uncertainty = high score
-        else:
-            # Incorrect predictions should have high uncertainty
-            labels = (~is_correct).astype(int)
-            scores = uncertainties
-        
-        # Check if we have both classes
-        if len(np.unique(labels)) < 2:
-            return 0.5  # Random performance if only one class
-        
-        try:
-            return float(roc_auc_score(labels, scores))
-        except ValueError:
-            return 0.5
-    
-    def calculate_epistemic_auroc(
-        self,
-        uncertainties: FloatArray,
-        is_epistemic: NDArray[np.bool_],
-    ) -> float:
-        """
-        Calculate AUROC for epistemic uncertainty detection.
-        
-        Args:
-            uncertainties: Uncertainty scores
-            is_epistemic: Boolean array indicating epistemic samples
-        
-        Returns:
-            AUROC score
-        """
-        labels = is_epistemic.astype(int)
-        
-        if len(np.unique(labels)) < 2:
-            return 0.5
-        
-        try:
-            return float(roc_auc_score(labels, uncertainties))
-        except ValueError:
-            return 0.5
-    
-    def calculate_aleatoric_auroc(
-        self,
-        uncertainties: FloatArray,
-        is_noisy: NDArray[np.bool_],
-    ) -> float:
-        """
-        Calculate AUROC for aleatoric uncertainty detection.
-        
-        Args:
-            uncertainties: Uncertainty scores
-            is_noisy: Boolean array indicating noisy labels
-        
-        Returns:
-            AUROC score
-        """
-        labels = is_noisy.astype(int)
-        
-        if len(np.unique(labels)) < 2:
-            return 0.5
-        
-        try:
-            return float(roc_auc_score(labels, uncertainties))
-        except ValueError:
-            return 0.5
-    
-    def calculate_ude(
-        self,
-        uncertainties: FloatArray,
-        is_correct: NDArray[np.bool_],
-        num_bins: int = 10,
-    ) -> float:
-        """
-        Calculate Uncertainty Disagreement Error (UDE).
-        
-        UDE measures the correlation between uncertainty and correctness.
-        Lower UDE indicates better uncertainty calibration.
-        
-        Args:
-            uncertainties: Uncertainty scores
-            is_correct: Boolean array indicating correct predictions
-            num_bins: Number of bins for discretization
-        
-        Returns:
-            UDE score
-        """
-        # Sort by uncertainty
-        sorted_indices = np.argsort(uncertainties)
-        sorted_correct = is_correct[sorted_indices]
-        
-        # Split into bins
-        bin_size = len(sorted_correct) // num_bins
-        ude_sum = 0.0
-        
-        for i in range(num_bins):
-            start_idx = i * bin_size
-            end_idx = (i + 1) * bin_size if i < num_bins - 1 else len(sorted_correct)
-            
-            bin_correct = sorted_correct[start_idx:end_idx]
-            bin_accuracy = bin_correct.mean()
-            
-            # UDE: difference from expected accuracy
-            # Low uncertainty bins should have high accuracy
-            expected_accuracy = 1.0 - (i / num_bins)
-            ude_sum += abs(bin_accuracy - expected_accuracy)
-        
-        return float(ude_sum / num_bins)
-    
-    def calculate_ece(
-        self,
-        probabilities: FloatArray,
-        targets: LabelArray,
-        num_bins: int = 15,
-    ) -> float:
-        """
-        Calculate Expected Calibration Error (ECE).
-        
-        Args:
-            probabilities: Predicted probabilities (N, C)
-            targets: True labels (N,)
-            num_bins: Number of bins
-        
-        Returns:
-            ECE score
-        """
-        # Get confidence (max probability) and predictions
-        confidences = probabilities.max(axis=1)
-        predictions = probabilities.argmax(axis=1)
-        accuracies = (predictions == targets).astype(float)
-        
-        # Create bins
-        bin_boundaries = np.linspace(0, 1, num_bins + 1)
-        bin_lowers = bin_boundaries[:-1]
-        bin_uppers = bin_boundaries[1:]
-        
-        ece = 0.0
-        for bin_lower, bin_upper in zip(bin_lowers, bin_uppers):
-            # Find samples in this bin
-            in_bin = (confidences > bin_lower) & (confidences <= bin_upper)
-            prop_in_bin = in_bin.mean()
-            
-            if prop_in_bin > 0:
-                accuracy_in_bin = accuracies[in_bin].mean()
-                avg_confidence_in_bin = confidences[in_bin].mean()
-                ece += np.abs(avg_confidence_in_bin - accuracy_in_bin) * prop_in_bin
-        
-        return float(ece)
-    
-    def calculate_brier_score(
-        self,
-        probabilities: FloatArray,
-        targets: LabelArray,
-    ) -> float:
-        """
-        Calculate Brier score.
-        
-        Args:
-            probabilities: Predicted probabilities (N, C)
-            targets: True labels (N,)
-        
-        Returns:
-            Brier score
-        """
-        # Convert targets to one-hot
-        one_hot = np.zeros_like(probabilities)
-        one_hot[np.arange(len(targets)), targets] = 1
-        
-        # Calculate Brier score
-        brier = np.mean(np.sum((probabilities - one_hot) ** 2, axis=1))
-        
-        return float(brier)
-    
-    def calculate_nll(
-        self,
-        probabilities: FloatArray,
-        targets: LabelArray,
-    ) -> float:
-        """
-        Calculate Negative Log-Likelihood.
-        
-        Args:
-            probabilities: Predicted probabilities (N, C)
-            targets: True labels (N,)
-        
-        Returns:
-            NLL score
-        """
-        # Get probabilities of true class
-        true_class_probs = probabilities[np.arange(len(targets)), targets]
-        
-        # Clip to avoid log(0)
-        true_class_probs = np.clip(true_class_probs, 1e-10, 1.0)
-        
-        # Calculate NLL
-        nll = -np.mean(np.log(true_class_probs))
-        
-        return float(nll)
-    
-    def calculate_all_metrics(
-        self,
-        probabilities: FloatArray,
-        predictions: LabelArray,
-        targets: LabelArray,
-        uncertainties: Optional[FloatArray] = None,
-        is_noisy: Optional[NDArray[np.bool_]] = None,
-        is_epistemic: Optional[NDArray[np.bool_]] = None,
-    ) -> MetricsDict:
-        """
-        Calculate all available metrics.
-        
-        Args:
-            probabilities: Predicted probabilities (N, C)
-            predictions: Predicted labels (N,)
-            targets: True labels (N,)
-            uncertainties: Uncertainty scores (N,)
-            is_noisy: Boolean array indicating noisy labels
-            is_epistemic: Boolean array indicating epistemic samples
-        
-        Returns:
-            Dictionary of all metrics
-        """
-        metrics = {}
-        
-        # Classification metrics
-        metrics["accuracy"] = self.calculate_accuracy(predictions, targets)
-        metrics.update(self.calculate_precision_recall_f1(predictions, targets))
-        
-        # Calibration metrics
-        metrics["ece"] = self.calculate_ece(probabilities, targets)
-        metrics["brier_score"] = self.calculate_brier_score(probabilities, targets)
-        metrics["nll"] = self.calculate_nll(probabilities, targets)
-        
-        # Uncertainty metrics
-        if uncertainties is not None:
-            is_correct = (predictions == targets)
-            metrics["auroc"] = self.calculate_auroc(uncertainties, is_correct)
-            metrics["ude"] = self.calculate_ude(uncertainties, is_correct)
-            
-            if is_noisy is not None:
-                metrics["auroc_aleatoric"] = self.calculate_aleatoric_auroc(
-                    uncertainties, is_noisy
-                )
-            
-            if is_epistemic is not None:
-                metrics["auroc_epistemic"] = self.calculate_epistemic_auroc(
-                    uncertainties, is_epistemic
-                )
-        
-        return metrics
-
-
-def calculate_per_class_metrics(
-    predictions: LabelArray,
-    targets: LabelArray,
-    num_classes: int = 10,
-) -> Dict[int, Dict[str, float]]:
-    """
-    Calculate per-class metrics.
+    Compute confusion matrix.
     
     Args:
-        predictions: Predicted labels
-        targets: True labels
         num_classes: Number of classes
-    
-    Returns:
-        Dictionary mapping class index to metrics
-    """
-    per_class = {}
-    
-    for class_idx in range(num_classes):
-        # Binary classification for this class
-        class_predictions = (predictions == class_idx).astype(int)
-        class_targets = (targets == class_idx).astype(int)
+        y_true: True labels [N]
+        y_pred: Predicted labels [N]
         
-        # Calculate metrics
-        if class_targets.sum() > 0:  # Only if class exists in targets
-            precision = precision_score(class_targets, class_predictions, zero_division=0)
-            recall = recall_score(class_targets, class_predictions, zero_division=0)
-            f1 = f1_score(class_targets, class_predictions, zero_division=0)
-            
-            per_class[class_idx] = {
-                "precision": float(precision),
-                "recall": float(recall),
-                "f1_score": float(f1),
-                "support": int(class_targets.sum()),
-            }
+    Returns:
+        Confusion matrix [num_classes, num_classes]
+    """
+    cm = torch.zeros((num_classes, num_classes), dtype=torch.long)
+    for t, p in zip(y_true.long(), y_pred.long()):
+        cm[int(t), int(p)] += 1
+    return cm
+
+
+def macro_f1(y_true: torch.Tensor, y_pred: torch.Tensor, num_classes: int) -> float:
+    """
+    Calculate macro-averaged F1 score.
     
-    return per_class
+    Computes F1 for each class independently, then averages.
+    Gives equal weight to all classes regardless of support.
+    
+    Args:
+        y_true: True labels [N]
+        y_pred: Predicted labels [N]
+        num_classes: Number of classes
+        
+    Returns:
+        Macro-averaged F1 score
+    """
+    cm = confusion_matrix(num_classes, y_true, y_pred).float()
+    f1s = []
+    for c in range(num_classes):
+        tp = cm[c, c]
+        fp = cm[:, c].sum() - tp
+        fn = cm[c, :].sum() - tp
+        denom = (2 * tp + fp + fn).item()
+        if denom == 0:
+            f1s.append(0.0)
+        else:
+            f1s.append(float((2 * tp / (2 * tp + fp + fn)).item()))
+    return float(sum(f1s) / len(f1s))
 
 
-# Made with Bob
+def standardize(train_x: torch.Tensor, test_x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+    """
+    Standardize features using training set statistics.
+    
+    Args:
+        train_x: Training features [N_train, D]
+        test_x: Test features [N_test, D]
+        
+    Returns:
+        Tuple of (standardized_train, standardized_test)
+    """
+    mean = train_x.mean(dim=0, keepdim=True)
+    std = train_x.std(dim=0, keepdim=True).clamp_min(1e-6)
+    return (train_x - mean) / std, (test_x - mean) / std
+
+
+def train_signal_classifier(
+    x_train: torch.Tensor,
+    y_train: torch.Tensor,
+    x_test: torch.Tensor,
+    *,
+    device: torch.device,
+    epochs: int = 300,
+    learning_rate: float = 0.05,
+) -> torch.Tensor:
+    """
+    Train a simple linear classifier on uncertainty signals.
+    
+    Used to evaluate how well different signal combinations can
+    distinguish between clean, aleatoric, and epistemic samples.
+    
+    Args:
+        x_train: Training features [N_train, D]
+        y_train: Training labels [N_train]
+        x_test: Test features [N_test, D]
+        device: Device to train on
+        epochs: Number of training epochs
+        learning_rate: Learning rate
+        
+    Returns:
+        Predicted labels for test set [N_test]
+    """
+    x_train, x_test = standardize(x_train, x_test)
+    model = nn.Linear(int(x_train.shape[1]), int(y_train.max().item()) + 1).to(device)
+    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+    criterion = nn.CrossEntropyLoss()
+
+    x_train = x_train.to(device)
+    y_train = y_train.to(device)
+    x_test = x_test.to(device)
+
+    for _ in range(epochs):
+        optimizer.zero_grad()
+        logits = model(x_train)
+        loss = criterion(logits, y_train)
+        loss.backward()
+        optimizer.step()
+
+    with torch.no_grad():
+        preds = model(x_test).argmax(dim=1).cpu()
+    return preds
+
+
+def split_group_balanced_targets(
+    y: torch.Tensor, 
+    seed: int, 
+    train_fraction: float = 0.5
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """
+    Split data into train/test with balanced class distribution.
+    
+    Ensures each class has the same train/test split ratio.
+    
+    Args:
+        y: Labels [N]
+        seed: Random seed
+        train_fraction: Fraction of data for training
+        
+    Returns:
+        Tuple of (train_indices, test_indices)
+    """
+    rng = np.random.default_rng(seed)
+    train_idx: List[int] = []
+    test_idx: List[int] = []
+    for cls in sorted(set(int(v) for v in y.tolist())):
+        cls_idx = np.where(y.numpy() == cls)[0]
+        rng.shuffle(cls_idx)
+        cut = max(1, int(len(cls_idx) * train_fraction))
+        train_idx.extend(cls_idx[:cut].tolist())
+        test_idx.extend(cls_idx[cut:].tolist())
+    return torch.as_tensor(train_idx, dtype=torch.long), torch.as_tensor(test_idx, dtype=torch.long)
+
+
+def predict_eval_groups_single_signal(
+    signal_values: torch.Tensor,
+    eval_group_labels: torch.Tensor,
+    *,
+    seed: int,
+    train_fraction: float = 0.5,
+    device: torch.device | None = None,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """
+    Train a one-feature linear 3-way classifier; return predicted group id per sample.
+
+    Uses the same balanced train/test split as :func:`evaluate_three_way_classification`.
+    Predictions are produced for every sample (train + test) after fitting on the train split.
+
+    Returns
+    -------
+    predicted_labels
+        Integer group ids ``0=clean, 1=aleatoric, 2=epistemic`` [N].
+    is_test_mask
+        True where the sample was in the held-out test split [N].
+    """
+    if device is None:
+        device = torch.device("cpu")
+
+    n = int(signal_values.shape[0])
+    x = signal_values.reshape(n, 1).float()
+    y = eval_group_labels.long()
+
+    train_idx, test_idx = split_group_balanced_targets(y, seed, train_fraction)
+    x_train = x[train_idx]
+    y_train = y[train_idx]
+
+    x_train_s, x_all_s = standardize(x_train, x)
+    model = nn.Linear(1, int(y.max().item()) + 1).to(device)
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.05)
+    criterion = nn.CrossEntropyLoss()
+
+    x_train_s = x_train_s.to(device)
+    y_train = y_train.to(device)
+    x_all_s = x_all_s.to(device)
+
+    for _ in range(300):
+        optimizer.zero_grad()
+        loss = criterion(model(x_train_s), y_train)
+        loss.backward()
+        optimizer.step()
+
+    with torch.no_grad():
+        predicted_labels = model(x_all_s).argmax(dim=1).cpu()
+
+    is_test_mask = torch.zeros(n, dtype=torch.bool)
+    is_test_mask[test_idx] = True
+    return predicted_labels, is_test_mask
+
+
+_PREDICTIVE_SIGNAL_KEYS = ("msp_uncertainty", "predictive_entropy", "mutual_info")
+
+
+def _stack_available_signals(
+    signal_table: Dict[str, torch.Tensor],
+    keys: tuple[str, ...],
+) -> torch.Tensor | None:
+    """Stack signal columns that are present in ``signal_table`` (order preserved)."""
+    from uqlab.evaluation.signals.catalog import resolve_signal_table_key
+
+    cols: list[torch.Tensor] = []
+    for key in keys:
+        resolved = resolve_signal_table_key(signal_table, key)
+        if resolved is not None:
+            cols.append(signal_table[resolved])
+    if not cols:
+        return None
+    return torch.stack(cols, dim=1)
+
+
+_ATTRIBUTION_SIGNAL_KEYS = (
+    "inverse_coherence",
+    "inverse_dominance",
+    "inverse_mass",
+)
+
+
+def evaluate_three_way_classification(
+    signal_table: Dict[str, torch.Tensor],
+    eval_group_labels: torch.Tensor,
+    device: torch.device,
+    seed: int,
+    train_fraction: float = 0.5,
+) -> List[Tuple[str, float]]:
+    """
+    Evaluate N-way group classification using different signal combinations.
+
+    ``num_classes`` is inferred from ``eval_group_labels`` (3 for legacy, 4 for four-region).
+    
+    Trains simple linear classifiers on different signal subsets and evaluates
+    their ability to distinguish between uncertainty types.
+    
+    Args:
+        signal_table: Dictionary of uncertainty signals
+        eval_group_labels: Ground truth group labels [N]
+        device: Device to train on
+        seed: Random seed for train/test split
+        train_fraction: Fraction of data for training
+        
+    Returns:
+        List of (signal_set_name, macro_f1_score) tuples
+    """
+    n = len(eval_group_labels)
+
+    # Predictive stack: only columns that were computed (e.g. mutual_info omitted when dropout=0)
+    signal_matrix_predictive = _stack_available_signals(signal_table, _PREDICTIVE_SIGNAL_KEYS)
+    
+    from uqlab.evaluation.signals.catalog import resolve_signal_table_key
+
+    # Build attribution + logit matrices from available columns (legacy or suffixed ids).
+    attribution_signals = []
+    for key in _ATTRIBUTION_SIGNAL_KEYS:
+        resolved = resolve_signal_table_key(signal_table, key)
+        if resolved is not None:
+            attribution_signals.append(signal_table[resolved])
+        elif key == "inverse_dominance" and "dominance" in signal_table:
+            attribution_signals.append(1.0 - signal_table["dominance"].clamp(0.0, 1.0))
+
+    logit_key = resolve_signal_table_key(signal_table, "inverse_logit_magnitude")
+    if logit_key is not None:
+        attribution_signals.append(signal_table[logit_key])
+    
+    # Stack if we have any attribution signals
+    if attribution_signals:
+        signal_matrix_attribution = torch.stack(attribution_signals, dim=1)
+    else:
+        # Fallback: use zeros if no attribution signals
+        signal_matrix_attribution = torch.zeros((n, 1))
+
+    combined_parts: list[torch.Tensor] = []
+    if signal_matrix_predictive is not None:
+        combined_parts.append(signal_matrix_predictive)
+    combined_parts.append(signal_matrix_attribution)
+    signal_matrix_combined = (
+        combined_parts[0]
+        if len(combined_parts) == 1
+        else torch.cat(combined_parts, dim=1)
+    )
+
+    signal_sets: list[tuple[str, torch.Tensor]] = []
+    if signal_matrix_predictive is not None:
+        signal_sets.append(("predictive_only", signal_matrix_predictive))
+    signal_sets.append(("attribution_only", signal_matrix_attribution))
+    signal_sets.append(("combined", signal_matrix_combined))
+
+    # Optional: Add compound signal if available
+    if "compound_uncertainty" in signal_table:
+        signal_matrix_enhanced = torch.cat(
+            [signal_matrix_combined, signal_table["compound_uncertainty"].unsqueeze(1)],
+            dim=1,
+        )
+        signal_sets.append(("enhanced_with_hybrid", signal_matrix_enhanced))
+    
+    # Split data into train/test with balanced classes
+    clf_train_idx, clf_test_idx = split_group_balanced_targets(
+        eval_group_labels,
+        seed=seed + 1,
+        train_fraction=train_fraction
+    )
+    
+    num_classes = int(eval_group_labels.max().item()) + 1
+
+    # Train and evaluate classifiers
+    results = []
+    for name, signal_matrix in signal_sets:
+        preds = train_signal_classifier(
+            signal_matrix[clf_train_idx],
+            eval_group_labels[clf_train_idx],
+            signal_matrix[clf_test_idx],
+            device=device,
+        )
+        score = macro_f1(eval_group_labels[clf_test_idx], preds, num_classes=num_classes)
+        results.append((name, score))
+    
+    return results

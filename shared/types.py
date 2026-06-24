@@ -96,12 +96,11 @@ class SignalType(str, Enum):
     PREDICTIVE_ENTROPY = "predictive_entropy"
     MUTUAL_INFO = "mutual_info"
     
-    # Attribution-based signals
-    COHERENCE = "coherence"
+    # Attribution-based signals (exported metrics)
     INVERSE_COHERENCE = "inverse_coherence"
+    INVERSE_DOMINANCE = "inverse_dominance"
     
     # Logit-based signals
-    DOMINANCE = "dominance"
     INVERSE_MASS = "inverse_mass"
     INVERSE_LOGIT_MAGNITUDE = "inverse_logit_magnitude"
     
@@ -242,33 +241,52 @@ class PredictionResult:
 # Constants
 # ============================================================================
 
-# Signal names in canonical order
-SIGNAL_NAMES = [
-    "msp_uncertainty",
-    "predictive_entropy",
-    "mutual_info",
-    "inverse_coherence",
-    "dominance",
-    "inverse_mass",
-    "inverse_logit_magnitude",
-]
+# Signal names in canonical order (from registry)
+from uqlab.evaluation.signals.catalog import (
+    aleatoric_signal_ids,
+    epistemic_signal_ids,
+    signal_labels,
+    signal_names,
+    signals_by_family,
+)
+
+SIGNAL_NAMES = signal_names()
 
 # Signal display labels
-SIGNAL_LABELS = {
-    "msp_uncertainty": "MSP",
-    "predictive_entropy": "Predictive Entropy",
-    "mutual_info": "Mutual Information",
-    "inverse_coherence": "Inverse Coherence",
-    "dominance": "Dominance",
-    "inverse_mass": "Inverse Mass",
-    "inverse_logit_magnitude": "Inverse Logit Magnitude",
-}
+SIGNAL_LABELS = signal_labels()
 
 # Epistemic signals (respond to dataset size, stable to noise)
-EPISTEMIC_SIGNALS = ["inverse_mass", "dominance", "inverse_logit_magnitude"]
+EPISTEMIC_SIGNALS = epistemic_signal_ids()
 
 # Aleatoric signals (respond to noise, stable to dataset size)
-ALEATORIC_SIGNALS = ["inverse_coherence"]
+ALEATORIC_SIGNALS = aleatoric_signal_ids()
+
+# Deprecated raw columns in pre-refactor ``per_sample_signals.csv`` files
+LEGACY_SIGNAL_NAMES = ("coherence", "dominance")
+
+
+def signal_choices() -> list[tuple[str, str]]:
+    """(metric id, display label) pairs in canonical ``METRICS`` order."""
+    return [(sid, SIGNAL_LABELS[sid]) for sid in SIGNAL_NAMES]
+
+
+def signals_viz_categories() -> dict[str, list[str]]:
+    """UI grouping: predictive / attribution / logit families."""
+    fam = signals_by_family()
+    return {
+        "Predictive Uncertainty": fam["predictive"],
+        "Attribution-Based (DualXDA)": fam["attribution"],
+        "Logit-Based (Representer)": fam["logit"],
+    }
+
+
+def signal_category_label(signal_id: str) -> str:
+    """Short category for benchmark / sweep plot legends."""
+    if signal_id in EPISTEMIC_SIGNALS:
+        return "Epistemic Indicator"
+    if signal_id in ALEATORIC_SIGNALS:
+        return "Aleatoric Indicator"
+    return "General"
 
 # Group order for visualizations
 GROUP_ORDER = ("clean", "aleatoric_like", "epistemic_like")
@@ -291,7 +309,7 @@ COLOR_SCHEMES = {
         "predictive_entropy": "#9b59b6",
         "mutual_info": "#3498db",
         "inverse_coherence": "#e67e22",
-        "dominance": "#1abc9c",
+        "inverse_dominance": "#1abc9c",
         "inverse_mass": "#f39c12",
         "inverse_logit_magnitude": "#34495e",
     },

@@ -14,6 +14,15 @@ import plotly.graph_objects as go
 import streamlit as st
 from plotly.subplots import make_subplots
 
+from uqlab.shared.types import (
+    ALEATORIC_SIGNALS,
+    EPISTEMIC_SIGNALS,
+    LEGACY_SIGNAL_NAMES,
+    SIGNAL_LABELS,
+    SIGNAL_NAMES,
+    signal_choices,
+)
+
 # Metadata + canonical signal columns (matches ``save_per_sample_csv`` header).
 PER_SAMPLE_META_COLUMNS = (
     "group",
@@ -22,21 +31,16 @@ PER_SAMPLE_META_COLUMNS = (
     "noisy_label",
     "is_noisy",
 )
-PER_SAMPLE_SIGNAL_COLUMNS = (
-    "msp_uncertainty",
-    "predictive_entropy",
-    "mutual_info",
-    "coherence",
-    "inverse_coherence",
-    "dominance",
-    "inverse_mass",
-    "inverse_logit_magnitude",
-)
+PER_SAMPLE_SIGNAL_COLUMNS = tuple(SIGNAL_NAMES)
 GROUP_ORDER = ("clean", "aleatoric_like", "epistemic_like")
 
 
 def _present_signal_columns(df: pd.DataFrame, extra: Iterable[str] = ()) -> list[str]:
-    wanted = list(PER_SAMPLE_SIGNAL_COLUMNS) + list(extra)
+    wanted = (
+        list(PER_SAMPLE_SIGNAL_COLUMNS)
+        + [c for c in LEGACY_SIGNAL_NAMES if c not in PER_SAMPLE_SIGNAL_COLUMNS]
+        + list(extra)
+    )
     return [c for c in wanted if c in df.columns]
 
 
@@ -72,7 +76,7 @@ def render_per_sample_signal_visualizations(df: pd.DataFrame) -> None:
     st.markdown("### Per-sample signals")
     st.caption(
         "One row per evaluated sample: **group** = eval pack (clean / aleatoric_like / "
-        "epistemic_like). Signal columns match ``build_fast_pilot_signal_table``."
+        "epistemic_like). Signal columns match ``build_experiment_signal_table``."
     )
 
     tab_table, tab_summary, tab_dist, tab_corr, tab_ude = st.tabs(

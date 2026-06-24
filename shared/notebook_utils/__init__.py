@@ -1,5 +1,5 @@
-"""Notebook support utilities."""
-from .signals import *
-from .plotting import *
-from .data_utils import *
-from .metrics import *
+"""Notebook plotting helpers — import submodules directly."""
+
+from __future__ import annotations
+
+__all__: list[str] = []

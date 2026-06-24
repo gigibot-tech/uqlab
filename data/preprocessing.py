@@ -21,6 +21,35 @@ from torchvision import transforms
 CIFAR10_MEAN = (0.4914, 0.4822, 0.4465)
 CIFAR10_STD = (0.2023, 0.1994, 0.2010)
 
+# MNIST normalization (grayscale, repeated to 3ch in transforms)
+MNIST_MEAN = (0.1307,)
+MNIST_STD = (0.3081,)
+MNIST_MEAN_3CH = (0.1307, 0.1307, 0.1307)
+MNIST_STD_3CH = (0.3081, 0.3081, 0.3081)
+
+
+def get_mnist_transforms(*, repeat_channels: int = 3) -> transforms.Compose:
+    """MNIST → tensor, optional 3-channel repeat, resize to 32 for ResNet path."""
+    steps = [transforms.ToTensor(), transforms.Resize((32, 32))]
+    if repeat_channels == 3:
+        steps.append(transforms.Lambda(lambda x: x.repeat(3, 1, 1)))
+        steps.append(transforms.Normalize(MNIST_MEAN_3CH, MNIST_STD_3CH))
+    else:
+        steps.append(transforms.Normalize(MNIST_MEAN, MNIST_STD))
+    return transforms.Compose(steps)
+
+
+def get_dataset_image_transform(dataset_name: str) -> transforms.Compose:
+    """End-to-end image transforms keyed by dataset registry name."""
+    name = (dataset_name or "cifar10").lower()
+    if name in ("mnist", "fashion_mnist"):
+        return get_mnist_transforms(repeat_channels=3)
+    return transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Normalize(CIFAR10_MEAN, CIFAR10_STD),
+    ])
+
+
 # ImageNet normalization constants (for DINOv2)
 IMAGENET_MEAN = (0.485, 0.456, 0.406)
 IMAGENET_STD = (0.229, 0.224, 0.225)

@@ -8,15 +8,9 @@ from typing import Iterable, Sequence
 
 import pandas as pd
 
-SIGNAL_NAMES = [
-    "msp_uncertainty",
-    "predictive_entropy",
-    "mutual_info",
-    "inverse_coherence",
-    "dominance",
-    "inverse_mass",
-    "inverse_logit_magnitude",
-]
+from uqlab.evaluation.signals.catalog import signal_names
+
+SIGNAL_NAMES = signal_names()
 
 SOURCES = ("pytorch_validation", "paper_keras")
 SWEEP_TYPES = ("dataset_size", "label_noise")

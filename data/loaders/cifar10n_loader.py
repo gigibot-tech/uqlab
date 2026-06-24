@@ -80,6 +80,11 @@ class CIFAR10NDataset(Dataset):
         
         if train:
             self._load_noisy_labels()
+
+    @property
+    def class_names(self) -> list[str]:
+        """Human-readable CIFAR-10 class labels."""
+        return list(self.cifar10.classes)
     
     def _load_noisy_labels(self):
         """Load noisy labels from CIFAR-10N dataset."""

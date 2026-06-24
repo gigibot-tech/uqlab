@@ -1,7 +1,7 @@
 """
 Declarative provenance for fast-pilot uncertainty signals.
 
-Each exported column in ``build_fast_pilot_signal_table`` has a matching
+Each exported column in ``build_experiment_signal_table`` has a matching
 :class:`SignalFormulaSpec` describing operands (parts) and operators so runs
 can be audited without reading implementation code.
 """
@@ -41,7 +41,7 @@ class SignalFormulaSpec:
     operators: tuple[FormulaOperator, ...]
     formula: str  # human-readable
     implementation: str  # module.function
-    exported_in_fast_pilot: bool = True
+    exported_in_experiment: bool = True
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -62,13 +62,13 @@ def _topk_attribution_parts(top_k: int) -> tuple[FormulaPart, ...]:
     )
 
 
-def fast_pilot_signal_formula_specs(
+def experiment_signal_formula_specs(
     *,
     top_k: int = 10,
     mc_passes: int = 30,
     mass_eps: float = 1e-8,
 ) -> dict[str, SignalFormulaSpec]:
-    """Canonical formulas for columns written by ``build_fast_pilot_signal_table``."""
+    """Canonical formulas for columns written by ``build_experiment_signal_table``."""
     attr_parts = _topk_attribution_parts(top_k)
     common_topk_ops = (
         FormulaOperator("topk", ("T_i",), {"k": top_k, "key": "abs"}),
@@ -101,7 +101,7 @@ def fast_pilot_signal_formula_specs(
                 FormulaOperator("entropy", ("p_bar",), {"eps": 1e-10}),
             ),
             formula="H(E_t[p(y|x,θ_t)]) = -Σ_c p̄_c log p̄_c",
-            implementation="mc_dropout_uq.calculate_mc_dropout_uncertainty",
+            implementation="evaluation.signals.mc_dropout.calculate_mc_dropout_uncertainty",
         ),
         SignalFormulaSpec(
             signal="mutual_info",
@@ -118,7 +118,7 @@ def fast_pilot_signal_formula_specs(
                 FormulaOperator("subtract", ("H(p_bar)", "E_t[H(p_t)]"), {}),
             ),
             formula="H(E_t[p]) - E_t[H(p_t)]",
-            implementation="mc_dropout_uq.calculate_mc_dropout_uncertainty",
+            implementation="evaluation.signals.mc_dropout.calculate_mc_dropout_uncertainty",
         ),
         SignalFormulaSpec(
             signal="coherence",
@@ -144,8 +144,19 @@ def fast_pilot_signal_formula_specs(
             implementation="attribution_signals.inverse_coherence_from_coherence",
         ),
         SignalFormulaSpec(
+            signal="inverse_dominance",
+            label="Inverse attribution dominance (top-k)",
+            category="derived",
+            parts=(
+                FormulaPart("dominance", "Top-k dominance per sample", "attribution_structure"),
+            ),
+            operators=(FormulaOperator("one_minus", ("dominance",), {"clamp": "[0,1]"}),),
+            formula="1 - dominance",
+            implementation="signals.registry._compute_inverse_dominance",
+        ),
+        SignalFormulaSpec(
             signal="dominance",
-            label="Attribution dominance (top-k)",
+            label="Attribution dominance (top-k, internal)",
             category="attribution_structure",
             parts=attr_parts,
             operators=(
@@ -156,6 +167,7 @@ def fast_pilot_signal_formula_specs(
             ),
             formula="max_{i∈topk}|T_i| / (Σ_{i∈topk}|T_i| + ε)",
             implementation="attribution_signals.topk_influence_metrics",
+            exported_in_experiment=False,
         ),
         SignalFormulaSpec(
             signal="inverse_mass",
@@ -204,7 +216,7 @@ def fast_pilot_signal_formula_specs(
                 ),
                 formula="H_norm(labels of top-k positive supporters)",
                 implementation="attribution_signals.normalized_entropy_from_labels",
-                exported_in_fast_pilot=False,
+                exported_in_experiment=False,
             ),
             SignalFormulaSpec(
                 signal="mass",
@@ -214,7 +226,7 @@ def fast_pilot_signal_formula_specs(
                 operators=(*common_topk_ops, FormulaOperator("sum_abs", ("T_topk",), {})),
                 formula="Σ_{i∈topk}|T_i|",
                 implementation="attribution_signals.topk_influence_metrics",
-                exported_in_fast_pilot=False,
+                exported_in_experiment=False,
             ),
         ]
     )
@@ -235,10 +247,10 @@ def build_signal_formula_manifest(
     ``eval_protocol`` should describe that eval pools are fixed for a sweep
     point (architecture-invariant), matching the disentanglement paper bench.
     """
-    specs = fast_pilot_signal_formula_specs(
+    specs = experiment_signal_formula_specs(
         top_k=top_k, mc_passes=mc_passes, mass_eps=mass_eps
     )
-    exported = [k for k, s in specs.items() if s.exported_in_fast_pilot]
+    exported = [k for k, s in specs.items() if s.exported_in_experiment]
     return {
         "schema_version": 1,
         "eval_protocol": eval_protocol or {},

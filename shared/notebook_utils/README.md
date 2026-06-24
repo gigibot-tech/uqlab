@@ -46,7 +46,7 @@ Run notebooks with cwd = `notebooks/validation/` (or any cwd — `find_project_r
 
 ## Row 3 signals
 
-Fixed: `inverse_coherence`, `dominance`, `inverse_mass`.  
+Fixed: `inverse_coherence`, `inverse_dominance`, `inverse_mass`.  
 Fourth column: best mean AUROC among `msp_uncertainty`, `predictive_entropy`, `mutual_info`, `inverse_logit_magnitude`.
 
 ## Streamlit

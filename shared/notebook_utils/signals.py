@@ -4,63 +4,46 @@ from __future__ import annotations
 
 import pandas as pd
 
-SIGNAL_NAMES = [
-    "msp_uncertainty",
-    "predictive_entropy",
-    "mutual_info",
-    "inverse_coherence",
-    "dominance",
-    "inverse_mass",
-    "inverse_logit_magnitude",
-]
-
-# One subplot per type in sweep figures (includes ``coherence`` from fast-pilot table).
-SWEEP_SUBPLOT_SIGNALS: tuple[str, ...] = (
-    "msp_uncertainty",
-    "predictive_entropy",
-    "mutual_info",
-    "coherence",
-    "inverse_coherence",
-    "dominance",
-    "inverse_mass",
-    "inverse_logit_magnitude",
+from uqlab.evaluation.signals.catalog import (
+    aleatoric_signal_ids,
+    epistemic_signal_ids,
+    signal_labels,
+    signal_names,
+    step4_signal_groups,
+)
+from uqlab.shared.config.signals import (
+    PLOT_DEFAULT_ALEATORIC_SIGNAL,
+    PLOT_DEFAULT_EPISTEMIC_SIGNAL,
+    signal_id_column_candidates,
 )
 
+SIGNAL_NAMES = signal_names()
+
+# One subplot per type in sweep figures (canonical registry signals only).
+SWEEP_SUBPLOT_SIGNALS: tuple[str, ...] = tuple(SIGNAL_NAMES)
+
 # Row 3: rank these candidates by mean AUROC (sweep-appropriate type).
-ROW3_CANDIDATE_SIGNALS = [
-    "inverse_coherence",
-    "dominance",
-    "inverse_mass",
-    "msp_uncertainty",
-    "predictive_entropy",
-    "mutual_info",
-    "inverse_logit_magnitude",
-]
+ROW3_CANDIDATE_SIGNALS = list(SIGNAL_NAMES)
 
 # Logit-based epistemic signals (respond to dataset size, stable to noise)
-EPISTEMIC_SIGNALS = ["inverse_mass", "dominance", "inverse_logit_magnitude"]
+EPISTEMIC_SIGNALS = epistemic_signal_ids()
 
 # Attribution-based aleatoric signal (responds to noise, stable to dataset size)
-ALEATORIC_SIGNALS = ["inverse_coherence"]
+ALEATORIC_SIGNALS = aleatoric_signal_ids()
 
-# Deprecated: kept for imports; Row 3 now uses dynamic top-4 via get_top_n_signals.
-ROW3_FIXED_SIGNALS = ["inverse_coherence", "dominance", "inverse_mass"]
+# Row 3: fixed trio (DualXDA) + best baseline by sweep AUROC; legacy alias columns still match.
+ROW3_FIXED_SIGNALS = [
+    PLOT_DEFAULT_ALEATORIC_SIGNAL,
+    "inverse_dominance_dualxda",
+    PLOT_DEFAULT_EPISTEMIC_SIGNAL,
+]
 ROW3_FOURTH_CANDIDATES = [
-    "msp_uncertainty",
-    "predictive_entropy",
-    "mutual_info",
-    "inverse_logit_magnitude",
+    sid
+    for sid in SIGNAL_NAMES
+    if sid not in ROW3_FIXED_SIGNALS
 ]
 
-SIGNAL_LABELS = {
-    "msp_uncertainty": "MSP",
-    "predictive_entropy": "Predictive Entropy",
-    "mutual_info": "Mutual Information",
-    "inverse_coherence": "Inverse Coherence",
-    "dominance": "Dominance",
-    "inverse_mass": "Inverse Mass",
-    "inverse_logit_magnitude": "Inverse Logit Magnitude",
-}
+SIGNAL_LABELS = signal_labels()
 
 # Paper method column order (fuzzy-matched against df["architecture"]).
 PAPER_METHOD_PATTERNS: list[tuple[str, tuple[str, ...]]] = [
@@ -144,9 +127,11 @@ def row3_signal_names_for_plots(
     ranked = get_row3_signals(df, sweep_type=sweep_type)
     ordered: list[str] = []
     for sig in ROW3_FIXED_SIGNALS:
-        col = f"{sig}_mean"
-        if col in df.columns and sig not in ordered:
-            ordered.append(sig)
+        for candidate in signal_id_column_candidates(sig):
+            col = f"{candidate}_mean"
+            if col in df.columns and sig not in ordered:
+                ordered.append(sig)
+                break
     for sig, _ in ranked:
         if sig not in ordered:
             ordered.append(sig)

@@ -21,7 +21,7 @@ from torch.utils.data import DataLoader, Subset
 
 from uqlab.shared.config.classification import ModelConfig
 from uqlab.data.loaders.cifar10n_loader import CIFAR10NDataset
-from uqlab.evaluation.classification.data_loader import EmbeddingOrganizer, SplitSpec
+from uqlab.data.experiment_loader import EmbeddingOrganizer, SplitSpec
 
 
 class FeatureExtractor(ABC):
@@ -172,6 +172,10 @@ class DINOv2FeatureExtractor(FeatureExtractor):
     def get_epistemic_eval_pack(self) -> Dict[str, torch.Tensor]:
         """Get epistemic uncertainty evaluation pack."""
         return self.organizer.get_epistemic_eval_pack()
+
+    def get_ood_eval_pack(self) -> Dict[str, torch.Tensor]:
+        """Get OOD evaluation pack (four-region mode)."""
+        return self.organizer.get_ood_eval_pack()
 
 
 class CNNFeatureExtractor(FeatureExtractor):
@@ -443,7 +447,10 @@ def create_feature_extractor(
         ...     model=cnn_model,
         ... )
     """
-    if config.architecture == "dinov2_mlp":
+    from uqlab.models.architecture import normalize_architecture
+
+    arch = normalize_architecture(config.architecture)
+    if arch == "dinov2_mlp":
         # DINOv2 requires dataset and split information
         if dataset is None or split_spec is None or feature_cache_dir is None or noise_type is None:
             raise ValueError(
@@ -461,7 +468,7 @@ def create_feature_extractor(
             device=device,
         )
     
-    elif config.architecture == "cnn_mcdropout":
+    elif arch == "cnn_small":
         # CNN requires pre-initialized model
         if model is None:
             raise ValueError("CNN feature extractor requires a pre-initialized model")
@@ -472,7 +479,7 @@ def create_feature_extractor(
             batch_size=batch_size,
         )
     
-    elif config.architecture == "resnet18_mcdropout":
+    elif arch == "resnet18":
         # ResNet requires pre-initialized model
         if model is None:
             raise ValueError("ResNet feature extractor requires a pre-initialized model")

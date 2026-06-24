@@ -1,0 +1,134 @@
+from typing import Tuple
+
+import numpy as np
+import torch
+from scipy.stats import pearsonr, spearmanr
+from sklearn.utils import shuffle
+from torch.utils.data import DataLoader
+
+from uqlab.vendor.disentanglement_error.util import AverageMeter, ExperimentResults, Summary
+
+
+def decreasing_dataset_experiment(x_train, y_train, x_test, y_test, model, config):
+    dataset_sizes = config.dataset_sizes
+
+    x_train, y_train = shuffle(x_train, y_train)
+
+    experiment_results = ExperimentResults()
+    for dataset_size in dataset_sizes:
+        x_train_small, y_train_small = create_subsampled_dataset(x_train, y_train, dataset_size)
+
+        model.fit(x_train_small, y_train_small, dataset_size=dataset_size)
+
+        predictions, aleatorics, epistemics = model.predict_disentangling(x_test)
+
+        score = model.score(y_test, predictions)
+
+        experiment_results.scores.append(score)
+        experiment_results.aleatorics.append(aleatorics.mean())
+        experiment_results.epistemics.append(epistemics.mean())
+
+    if config.rank_correlation:
+        aleatoric_correlation, _ = spearmanr(experiment_results.aleatorics, experiment_results.scores)
+        epistemic_correlation, _ = spearmanr(experiment_results.epistemics, experiment_results.scores)
+    else:
+        aleatoric_correlation, _ = pearsonr(experiment_results.aleatorics, experiment_results.scores)
+        epistemic_correlation, _ = pearsonr(experiment_results.epistemics, experiment_results.scores)
+
+    return (
+        config.term_weights[0] * np.abs(aleatoric_correlation - 0)
+        + config.term_weights[1] * np.abs(epistemic_correlation - 1),
+        experiment_results,
+    )
+
+
+def create_subsampled_dataset(x_train, y_train, dataset_size):
+    x_train_subs = []
+    y_train_subs = []
+
+    for y_value in np.unique(y_train):
+        n_samples_per_class = int(np.sum((y_train == y_value)) * dataset_size)
+        if n_samples_per_class == 0:
+            n_samples_per_class = 1
+        x_train_subs.append(x_train[y_train == y_value][:n_samples_per_class])
+        y_train_subs.append(y_train[y_train == y_value][:n_samples_per_class])
+
+    x_train_sub = np.concatenate(x_train_subs)
+    y_train_sub = np.concatenate(y_train_subs)
+    x_train_sub, y_train_sub = shuffle(x_train_sub, y_train_sub)
+
+    return x_train_sub, y_train_sub
+
+
+def create_subset_dataloaders(train_dataset, val_dataset, percentage, batch_size, workers) -> Tuple[DataLoader, DataLoader]:
+    indices = torch.randperm(len(train_dataset.samples))[: int(len(train_dataset.samples) * percentage)]
+    train_sampler = torch.utils.data.SubsetRandomSampler(indices)
+
+    train_loader = torch.utils.data.DataLoader(
+        train_dataset,
+        batch_size=batch_size,
+        shuffle=(train_sampler is None),
+        num_workers=workers,
+        pin_memory=True,
+        sampler=train_sampler,
+    )
+
+    val_loader = torch.utils.data.DataLoader(
+        val_dataset,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=workers,
+        pin_memory=True,
+        sampler=None,
+    )
+
+    return train_loader, val_loader
+
+
+def decreasing_dataset_experiment_torch(
+    train_dataset, val_dataset, model, config, batch_size, workers, train_only=False
+):
+    dataset_sizes = config.dataset_sizes
+
+    experiment_results = ExperimentResults()
+    for dataset_size in dataset_sizes:
+        use_accel = True
+        train_dataloader, val_dataloader = create_subset_dataloaders(
+            train_dataset, val_dataset, dataset_size, batch_size=batch_size, workers=workers
+        )
+
+        model.fit(train_dataloader, val_dataloader, dataset_size=dataset_size)
+
+        if not train_only:
+            accuracy_meter = AverageMeter("Acc@1", use_accel, ":6.2f", Summary.AVERAGE)
+            aleatoric_meter = AverageMeter("Ale", use_accel, ":6.2f", Summary.AVERAGE)
+            epistemic_meter = AverageMeter("Epi", use_accel, ":6.2f", Summary.AVERAGE)
+            for _images, _target in val_dataloader:
+                predictions, aleatorics, epistemics = model.predict_disentangling(_images)
+
+                score = model.score(_target, predictions.cpu())
+
+                accuracy_meter.update(score[0], _images.size(0))
+                aleatoric_meter.update(aleatorics.mean().cpu(), _images.size(0))
+                epistemic_meter.update(epistemics.mean().cpu(), _images.size(0))
+
+            experiment_results.scores.append(accuracy_meter.avg)
+            experiment_results.aleatorics.append(aleatoric_meter.avg)
+            experiment_results.epistemics.append(epistemic_meter.avg)
+        else:
+            experiment_results.scores.append(0.5)
+            experiment_results.aleatorics.append(0.5)
+            experiment_results.epistemics.append(0.5)
+
+    if config.rank_correlation:
+        aleatoric_correlation, _ = spearmanr(experiment_results.aleatorics, experiment_results.scores)
+        epistemic_correlation, _ = spearmanr(experiment_results.epistemics, experiment_results.scores)
+    else:
+        aleatoric_correlation, _ = pearsonr(experiment_results.aleatorics, experiment_results.scores)
+        epistemic_correlation, _ = pearsonr(experiment_results.epistemics, experiment_results.scores)
+
+    return (
+        config.term_weights[0] * np.abs(aleatoric_correlation - 0)
+        + config.term_weights[1] * np.abs(epistemic_correlation - 1),
+        experiment_results,
+    )

@@ -6,6 +6,8 @@ including epistemic/aleatoric uncertainty, model architecture, training,
 and evaluation settings.
 """
 
+import warnings
+
 import streamlit as st
 import pandas as pd
 from typing import Dict, List, Tuple, Optional, Callable, Any
@@ -369,16 +371,22 @@ def render_evaluation_config(
         "Predictive Uncertainty (Baseline)": [
             "msp_uncertainty",
             "predictive_entropy",
-            "mutual_info"
+            "expected_entropy",
+            "mutual_info",
         ],
-        "Attribution-Based (DualXDA)": [
-            "inverse_coherence",
-            "dominance"
+        "DualXDA attribution": [
+            "inverse_coherence_dualxda",
+            "inverse_dominance_dualxda",
+            "inverse_mass_dualxda",
         ],
-        "Logit-Based (Representer Theorem)": [
-            "inverse_mass",
-            "inverse_logit_magnitude"
-        ]
+        "EK-FAC attribution (optional, needs kronfluence)": [
+            "inverse_coherence_ek_fak",
+            "inverse_dominance_ek_fak",
+            "inverse_mass_ek_fak",
+        ],
+        "Logit (Representer)": [
+            "inverse_logit_magnitude",
+        ],
     }
     
     col1, col2 = st.columns(2)
@@ -535,9 +543,15 @@ def build_base_experiment_config(
         num_conv_layers: Number of convolutional layers (for CNN)
         conv_channels: Channel sizes for each conv layer (for CNN)
     
-    Returns:
-        Configuration dictionary for experiment creation
+    .. deprecated::
+        Use ``uqlab_orchestrator.run_spec.build_run_yaml(workflow)`` instead.
+        Flat configs are legacy-only (``streamlit_app.py`` / unified builder tab).
     """
+    warnings.warn(
+        "build_base_experiment_config is deprecated; use run_spec.build_run_yaml(workflow).",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     return {
         "noise_type": noise_type,
         "under_supported_classes": under_supported,

@@ -15,6 +15,11 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import streamlit as st
 
+from uqlab.ui_components.grouping.campaign_format import (
+    campaign_date_from_batch,
+    format_campaign_timestamp,
+    representative_experiment_id,
+)
 from uqlab.experiment_config_flat import (
     ALEATORIC_PARAM,
     EPISTEMIC_PARAM,
@@ -233,6 +238,28 @@ def analyze_experiment_for_viz(
     )
 
 
+def _count_arms(batch_exps: List[Dict[str, Any]]) -> Tuple[int, int]:
+    epis = sum(1 for e in batch_exps if _fast_sweep_arm(e) == "epis")
+    alea = sum(1 for e in batch_exps if _fast_sweep_arm(e) == "alea")
+    return epis, alea
+
+
+def _short_run_name(name: str) -> str:
+    """Human-readable run label from API experiment name."""
+    for pattern, fmt in (
+        (r"_noise_(\d+)$", "noise {}%"),
+        (r"_under_(\d+)$", "under-train {}"),
+        (r"aleatoric_noise_percentage_(\d+)$", "noise {}%"),
+        (r"under_train_per_class_(\d+)$", "under-train {}"),
+    ):
+        m = re.search(pattern, name)
+        if m:
+            return fmt.format(m.group(1))
+    if len(name) > 42:
+        return name[:39] + "…"
+    return name
+
+
 def format_experiment_viz_option(
     exp: Dict[str, Any],
     analysis: ExperimentVizAnalysis,
@@ -241,16 +268,9 @@ def format_experiment_viz_option(
 ) -> str:
     star = "★ " if highlight else ""
     status = exp.get("status", "?")
-    dim = analysis.dimension_label
-    pair = ""
-    if analysis.campaign_ts:
-        e_n = len(analysis.epis_batch)
-        a_n = len(analysis.alea_batch)
-        pair = f" | campaign {analysis.campaign_ts[:8]}… epis:{e_n} alea:{a_n}"
-        if analysis.missing_arm:
-            pair += f" (missing {analysis.missing_arm})"
+    short = _short_run_name(analysis.name)
     eid = str(exp.get("id", ""))[:8]
-    return f"{star}{analysis.name} [{dim}{pair}] ({status}) — {eid}…"
+    return f"{star}{short} ({status}) — {eid}"
 
 
 def _batch_label_map(
@@ -269,21 +289,34 @@ def _batch_label_map(
     batch_labels: Dict[str, Tuple[str, List[Dict[str, Any]], Dict[str, Any]]] = {}
     for batch_id, batch_exps in ordered:
         cfg = detect_experiment_configuration(batch_exps, mode=mode)
-        type_short = {
-            "1d_epistemic": "Fig.3 epis",
-            "1d_aleatoric": "Fig.4 alea",
-            "2d_grid": "2D",
-            "single_point": "single",
-        }.get(cfg["type"], cfg["type"])
-        if cfg["type"] == "1d_epistemic" and cfg["n_aleatoric"] >= 2:
-            type_short = "epis only"
-        elif cfg["type"] == "1d_aleatoric" and cfg["n_epistemic"] >= 2:
-            type_short = "alea only"
-        elif not cfg["needs_complement"] and cfg["n_epistemic"] >= 2 and cfg["n_aleatoric"] >= 2:
-            type_short = "both"
-        flag = " ⚠" if cfg["needs_complement"] else ""
+        n_epi_runs, n_alea_runs = _count_arms(batch_exps)
+
+        if n_epi_runs and n_alea_runs:
+            type_short = f"Fig 3+4 ({n_epi_runs}+{n_alea_runs} runs)"
+        elif n_epi_runs:
+            type_short = f"Fig 3 ({n_epi_runs} runs)"
+        elif n_alea_runs:
+            type_short = f"Fig 4 ({n_alea_runs} runs)"
+        else:
+            type_short = {
+                "1d_epistemic": "under-train sweep",
+                "1d_aleatoric": "noise sweep",
+                "2d_grid": "mixed axes",
+                "single_point": "single run",
+            }.get(cfg["type"], cfg["type"])
+
+        flag = ""
+        if n_epi_runs and not n_alea_runs:
+            flag = " · missing Fig 4 arm"
+        elif n_alea_runs and not n_epi_runs:
+            flag = " · missing Fig 3 arm"
+        elif cfg["needs_complement"] and not (n_epi_runs or n_alea_runs):
+            flag = f" · incomplete ({cfg.get('complement_type', '?')})"
+
+        date_label = campaign_date_from_batch(batch_id, batch_exps)
+        rep_id = representative_experiment_id(batch_exps)
         label = (
-            f"{batch_id} · {type_short} · "
+            f"{date_label} · {rep_id} · {type_short} · "
             f"{cfg['completed_count']}/{cfg['total_count']} done"
             f"{flag}"
         )
@@ -338,11 +371,16 @@ def render_sidebar_experiment_selector(
     key_prefix: str = "sb",
 ) -> Optional[Dict[str, Any]]:
     """
-    Left sidebar: pick campaign (epis / alea / both / single) and one run.
+    Left sidebar: browse past API runs by launch timestamp.
 
-    Writes ``highlight_experiment_id`` for the main-area plots.
+    Sets ``highlight_experiment_id`` (used by checkpoint resume). Main sweep
+    plots live in **Results §2–§3** below Step 5 — this picker is optional.
     """
-    st.markdown("### 🔍 Experiments")
+    st.markdown("### Experiments")
+    st.caption(
+        "Browse past launches grouped by timestamp. "
+        "**Results §2–§3** below is the main place for sweep plots."
+    )
     if not experiments:
         st.caption("No API runs in the database yet.")
         return None
@@ -365,10 +403,11 @@ def render_sidebar_experiment_selector(
                 break
 
     batch_label = st.selectbox(
-        "Campaign / batch",
+        "Launch group",
         options=list(batch_labels.keys()),
         index=default_batch_idx,
         key=f"{key_prefix}_batch",
+        help="Runs that share the same launch timestamp (e.g. Fig 3+4 from **Run both**).",
     )
     pick, batch_id, _batch_exps, config = _resolve_selection(
         experiments,
@@ -384,17 +423,18 @@ def render_sidebar_experiment_selector(
     st.session_state["uqlab_viz_batch_id"] = batch_id
 
     type_labels = {
-        "1d_epistemic": "1D epistemic (Fig. 3)",
-        "1d_aleatoric": "1D aleatoric (Fig. 4)",
-        "2d_grid": "2D grid",
+        "1d_epistemic": "Under-train sweep (Fig 3 style)",
+        "1d_aleatoric": "Label-noise sweep (Fig 4 style)",
+        "2d_grid": "Both axes vary (unusual)",
         "single_point": "Single run",
     }
     st.caption(f"**{type_labels.get(config['type'], config['type'])}**")
-    st.caption(
-        f"epis points: {config['n_epistemic']} · alea points: {config['n_aleatoric']}"
-    )
-    if config["needs_complement"]:
-        st.warning(f"Incomplete — missing **{config.get('complement_type', 'arm')}**")
+    n_epi_runs, n_alea_runs = _count_arms(_batch_exps)
+    st.caption(f"Fig 3 runs: {n_epi_runs} · Fig 4 runs: {n_alea_runs}")
+    if n_epi_runs and not n_alea_runs:
+        st.caption("Only Fig 3 arm in this group — launch Fig 4 for the paired paper plot.")
+    elif n_alea_runs and not n_epi_runs:
+        st.caption("Only Fig 4 arm in this group — launch Fig 3 for the paired paper plot.")
 
     on_disk = _experiment_results_dir(
         str(pick.get("id")),
@@ -402,5 +442,10 @@ def render_sidebar_experiment_selector(
     )
     if not (on_disk / "summary.json").is_file() and not (on_disk / "results.pt").is_file():
         st.caption("⚠️ No on-disk results (check `/tmp` vs `data/` path)")
+
+    if st.button("Checkpoint arsenal", key=f"{key_prefix}_arsenal", use_container_width=True):
+        from uqlab.ui_components.results.checkpoint_arsenal_viz import open_checkpoint_arsenal_dialog
+
+        open_checkpoint_arsenal_dialog(experiments, workflow, key_prefix=f"{key_prefix}_arsenal")
 
     return pick
