@@ -12,6 +12,7 @@ import streamlit as st
 
 from uqlab.ui_components.progressive.sweep_analysis_section import render_sweep_analysis_hub
 from uqlab.ui_components.results.experiment_results_panel import render_experiment_results_panel
+from uqlab.ui_components.style import inject_results_css
 from uqlab.ui_components.ui_debug import sync_results_auto_refresh, ui_on
 
 
@@ -27,10 +28,11 @@ def render_progressive_results_section(
         st.markdown("---")
         st.caption(
             "Results hidden (UI debug). Open sidebar **UI debug → Results defaults** to show "
-            "§1–§4 below Step 5."
+            "§1–§3 below Step 5."
         )
         return
 
+    inject_results_css()
     st.markdown("---")
     st.markdown("## Results")
     st.caption(

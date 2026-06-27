@@ -33,7 +33,7 @@ from typing import Any, Tuple
 
 import numpy as np
 
-from uqlab.evaluation.artifacts import EvalRunArtifacts
+from uqlab.evaluation.metrics.artifacts import EvalRunArtifacts
 from uqlab.evaluation.signals.catalog import (
     METRIC_META,
     aleatoric_signal_ids,
@@ -163,7 +163,7 @@ class ExperimentDisentanglingModel(DisentanglingModel):
         if ctx:
             raise NotImplementedError(
                 "Legacy benchmark mode (running experiments from fit()) has been removed. "
-                "Run experiments separately via ``uqlab.runner.pipeline.run`` or the CLI, "
+                "Run experiments separately via ``uqlab.runner.execute.run_from_yaml`` or the CLI, "
                 "then create ExperimentDisentanglingModel with results_dir pointing to the output."
             )
 
@@ -190,7 +190,7 @@ class ExperimentDisentanglingModel(DisentanglingModel):
         if not results_path.exists():
             raise FileNotFoundError(
                 f"results.pt not found in {self.results_dir}. "
-                "Run experiments first via ``uqlab.runner.pipeline.run`` or the CLI"
+                "Run experiments first via ``uqlab.runner.execute.run_from_yaml`` or the CLI"
             )
         
         # Load results and extract signals using registry

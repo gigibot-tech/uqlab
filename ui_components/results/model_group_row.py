@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import streamlit as st
 
-from uqlab.evaluation.pipeline.checkpoint_arsenal import ConfigCluster, ModelSection
+from uqlab.evaluation.reporting.checkpoint_arsenal import ConfigCluster, ModelSection
 
 
 def _chip_help(chip) -> str:

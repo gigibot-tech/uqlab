@@ -44,6 +44,37 @@ class DINOv2Backbone(nn.Module):
         'large': 1024,
         'giant': 1536,
     }
+
+    LEGACY_ALIASES = {
+        "dinov2_vits14": "small",
+        "dinov2_vits14_reg": "small-reg",
+        "dinov2_vitb14": "base",
+        "dinov2_vitb14_reg": "base-reg",
+        "dinov2_vitl14": "large",
+        "dinov2_vitl14_reg": "large-reg",
+        "dinov2_vitg14": "giant",
+        "dinov2_vitg14_reg": "giant-reg",
+    }
+
+    @classmethod
+    def normalize_model_name(cls, model_name: str) -> str:
+        """Map torch.hub / legacy names to ``AVAILABLE_MODELS`` keys."""
+        if not model_name:
+            return "small"
+        key = model_name.strip().lower()
+        if key in cls.AVAILABLE_MODELS:
+            return key
+        if key in cls.LEGACY_ALIASES:
+            return cls.LEGACY_ALIASES[key]
+        if "vits14" in key or key.endswith("-small"):
+            return "small-reg" if "reg" in key else "small"
+        if "vitb14" in key or key.endswith("-base"):
+            return "base-reg" if "reg" in key else "base"
+        if "vitl14" in key or key.endswith("-large"):
+            return "large-reg" if "reg" in key else "large"
+        if "vitg14" in key or key.endswith("-giant"):
+            return "giant-reg" if "reg" in key else "giant"
+        return key
     
     def __init__(
         self,
@@ -64,7 +95,8 @@ class DINOv2Backbone(nn.Module):
             use_cls_token: Use [CLS] token (True) or mean pooling (False)
         """
         super().__init__()
-        
+
+        model_name = self.normalize_model_name(model_name)
         if model_name not in self.AVAILABLE_MODELS:
             raise ValueError(
                 f"Model {model_name} not found. "
@@ -242,6 +274,7 @@ def create_dinov2_model(
     Returns:
         DINOv2 model
     """
+    model_name = DINOv2Backbone.normalize_model_name(model_name)
     if mc_dropout:
         return DINOv2WithMCDropout(
             model_name=model_name,

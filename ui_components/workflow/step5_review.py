@@ -41,10 +41,12 @@ def render_step5_review(
             f"{eval_cfg.get('mc_passes', '?')} MC passes."
         )
 
-    with st.expander("View full workflow state", expanded=False):
+    with st.expander("Launch workflow (JSON)", expanded=False):
+        st.caption("Full config that will be submitted to the backend.")
         st.json(workflow)
 
-    with st.expander("Methods schematic", expanded=False):
+    with st.expander("Config schematic (what will run)", expanded=False):
+        st.caption("Panel A: train/eval pool definitions and counts from your Step 1–4 settings.")
         from uqlab.ui_components.visualization.thesis.thesis_diagram_viz import (
             render_thesis_diagram_panel,
         )
@@ -54,14 +56,16 @@ def render_step5_review(
             project_root=repository_root(),
             key_prefix="step5_thesis",
             default_symbolic=True,
+            panels=("a",),
         )
 
     dropout = float(tc.get("dropout") or 0.0)
     mc = int((workflow.get("evaluation_config") or {}).get("mc_passes") or 0)
     if mc > 1 and dropout <= 0.0:
         st.warning(
-            "**MC dropout note:** dropout is 0 — epistemic MC signals (`mutual_info`) "
-            "will not vary between passes."
+            "**MC dropout note:** dropout = 0 with MC>1 — epistemic MC signals "
+            "(`mutual_info`, entropy gap) are identical across passes, so epistemic "
+            "AUROC ≈ chance."
         )
 
     from uqlab.ui_components.progressive.launch_panel import render_launch_panel

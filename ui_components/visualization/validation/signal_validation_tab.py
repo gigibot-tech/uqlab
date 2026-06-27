@@ -436,19 +436,166 @@ def _render_preset_sweep_visualize() -> None:
             )
 
 
-def _render_four_region_correlation_panel() -> None:
+def _coerce_four_region_payload(
+    payload: Any,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Normalize an uploaded JSON into ``(noise_rows, sparsity_rows)``.
+
+    Accepts the canonical ``{"noise_rows", "sparsity_rows"}`` dict (incl. exported
+    reports), a bare list of row dicts, or a single row dict — splitting rows by
+    the presence of ``noise_pct`` / ``sparse_train_pct``.
+    """
+    def _split(rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        noise = [r for r in rows if isinstance(r, dict) and "noise_pct" in r]
+        sparse = [r for r in rows if isinstance(r, dict) and "sparse_train_pct" in r]
+        return noise, sparse
+
+    if isinstance(payload, dict):
+        noise_rows = payload.get("noise_rows")
+        sparsity_rows = payload.get("sparsity_rows")
+        if noise_rows is not None or sparsity_rows is not None:
+            return list(noise_rows or []), list(sparsity_rows or [])
+        # Single row dict — route by its sweep key.
+        return _split([payload])
+    if isinstance(payload, list):
+        return _split([r for r in payload if isinstance(r, dict)])
+    return [], []
+
+
+_REGION_ORDER = ["clean", "aleatoric_like", "epistemic_like", "ood_like"]
+
+
+def _render_per_region_signal_means(run_dir: Path, *, key_prefix: str) -> None:
+    """Simple metric plots: mean of each signal per region from per_sample_signals.csv."""
+    csv_path = run_dir / "per_sample_signals.csv"
+    if not csv_path.is_file():
+        return
+    try:
+        df = pd.read_csv(csv_path)
+    except (OSError, ValueError) as exc:
+        st.caption(f"Could not read `{csv_path.name}`: {exc}")
+        return
+    if "group" not in df.columns:
+        return
+
+    drop = {"group", "dataset_index", "clean_label", "noisy_label", "is_noisy"}
+    signal_cols = [c for c in df.columns if c not in drop and pd.api.types.is_numeric_dtype(df[c])]
+    if not signal_cols:
+        return
+
+    means = df.groupby("group")[signal_cols].mean()
+    order = [g for g in _REGION_ORDER if g in means.index] + [
+        g for g in means.index if g not in _REGION_ORDER
+    ]
+    means = means.reindex(order)
+
+    st.markdown("**Mean signal per region** (from `per_sample_signals.csv`)")
+    st.dataframe(means.round(4), use_container_width=True)
+
+    long_df = means.reset_index().melt(id_vars="group", var_name="signal", value_name="mean")
+    fig = px.bar(
+        long_df,
+        x="group",
+        y="mean",
+        color="group",
+        facet_col="signal",
+        facet_col_wrap=4,
+        category_orders={"group": order},
+        title="Mean uncertainty by region (per signal)",
+    )
+    fig.update_yaxes(matches=None, showticklabels=True)
+    fig.for_each_annotation(lambda a: a.update(text=a.text.split("=")[-1]))
+    fig.update_xaxes(showticklabels=False, title=None)
+    fig.update_layout(height=420, showlegend=True)
+    st.plotly_chart(fig, use_container_width=True, key=f"{key_prefix}_region_means")
+
+
+def _render_four_region_run_report(
+    summary: dict[str, Any],
+    *,
+    key_prefix: str,
+    source_label: str = "uploaded run",
+    run_dir: Path | None = None,
+) -> None:
+    """Per-region AUROC report for a single four-region run summary.
+
+    A four-region run separates noisy (aleatoric), sparse (epistemic), and OOD
+    regions from clean in one shot — so the validation here is region separability
+    per signal, not a multi-point sweep.
+    """
+    from uqlab.evaluation.four_region_validation import four_region_run_auroc_rows
+
+    rows = four_region_run_auroc_rows(summary)
+    if not rows:
+        st.warning(f"`{source_label}` has no per-signal region AUROCs to report.")
+        if run_dir is not None:
+            _render_per_region_signal_means(run_dir, key_prefix=key_prefix)
+        return
+
+    st.caption(
+        f"Single four-region run ({source_label}). Region separability per signal: "
+        "good **aleatoric** signals score high on noisy↔clean & low on sparse↔clean; "
+        "good **epistemic** signals are the reverse."
+    )
+    df = pd.DataFrame(rows)
+    sort_col = "specialization" if "specialization" in df.columns else "signal"
+    st.dataframe(
+        df.sort_values(sort_col, ascending=False) if sort_col != "signal" else df,
+        use_container_width=True,
+        hide_index=True,
+    )
+
+    alea_col, epi_col = "aleatoric (noisy↔clean)", "epistemic (sparse↔clean)"
+    if alea_col in df.columns and epi_col in df.columns:
+        plot_df = df.dropna(subset=[alea_col, epi_col])
+        if not plot_df.empty:
+            fig = px.scatter(
+                plot_df,
+                x=alea_col,
+                y=epi_col,
+                text="signal",
+                title="Region separability — aleatoric (x) vs epistemic (y)",
+            )
+            fig.update_traces(textposition="top center")
+            fig.add_hline(y=0.5, line_dash="dot", line_color="gray")
+            fig.add_vline(x=0.5, line_dash="dot", line_color="gray")
+            fig.update_layout(xaxis_range=[0, 1], yaxis_range=[0, 1])
+            st.plotly_chart(fig, use_container_width=True, key=f"{key_prefix}_run_scatter")
+
+    if run_dir is not None:
+        _render_per_region_signal_means(run_dir, key_prefix=key_prefix)
+
+    with st.expander("Raw run summary (JSON)", expanded=False):
+        st.json(summary)
+
+
+def render_four_region_validation_panel(
+    *,
+    key_prefix: str = "sv_fr",
+    project_root: Path | None = None,
+) -> None:
     """Aspect 7: monotonic + orthogonal correlation report."""
     from uqlab.evaluation.four_region_validation import (
         DEFAULT_ALEATORIC_METRICS,
         DEFAULT_EPISTEMIC_METRICS,
         build_correlation_report,
+        discover_four_region_run_dirs,
+        load_four_region_rows_from_sweep_csvs,
         load_four_region_sweep_rows_from_disk,
         mock_sweep_metric_rows,
         noise_sweep_regions,
         report_to_json,
         run_four_region_sweep_inprocess,
         sparsity_sweep_regions,
+        sweep_csv_architectures,
     )
+
+    root = project_root or _PROJECT_ROOT
+    results_root = root / "results"
+    validation_dir = root / "results" / "validation"
+    four_region_dir = validation_dir / "four_region"
+    noise_csv = validation_dir / "label_noise_sweep" / "metrics.csv"
+    sparsity_csv = validation_dir / "dataset_size_sweep" / "metrics.csv"
 
     st.markdown("### Four-region signal validation (Aspect 7)")
     st.caption(
@@ -457,7 +604,7 @@ def _render_four_region_correlation_panel() -> None:
         "and the sweeps are orthogonal."
     )
 
-    with st.expander("Sweep axes", expanded=False):
+    with st.expander("Sweep axes (dedicated four-region runs)", expanded=False):
         st.markdown("**Noise sweep** (noisy region `label_flip_pct`):")
         for pct, _ in noise_sweep_regions():
             st.write(f"- {pct}%")
@@ -466,42 +613,139 @@ def _render_four_region_correlation_panel() -> None:
             frac = regions["sparse"]["train_fraction"]
             st.write(f"- {pct}% ({frac})")
 
+    aleatoric_metrics: list[str] = list(DEFAULT_ALEATORIC_METRICS)
+    epistemic_metrics: list[str] = list(DEFAULT_EPISTEMIC_METRICS)
+
     source = st.radio(
         "Report source",
-        ["Mock demo", "Load from disk", "Upload JSON", "Run quick sweep (GPU)"],
+        ["Load from results/", "Upload JSON", "Synthetic example", "Run quick sweep (GPU)"],
         horizontal=True,
-        key="sv_fr_source",
+        key=f"{key_prefix}_source",
     )
 
     noise_rows: list[dict[str, Any]] = []
     sparsity_rows: list[dict[str, Any]] = []
 
-    if source == "Mock demo":
-        noise_rows, sparsity_rows = mock_sweep_metric_rows()
-    elif source == "Load from disk":
-        noise_rows, sparsity_rows = load_four_region_sweep_rows_from_disk(
-            _PROJECT_ROOT / "results" / "validation" / "four_region"
+    if source == "Synthetic example":
+        st.caption(
+            "Illustrative **fake** data showing an ideal PASS layout — not your runs. "
+            "Use *Load from results/* for real metrics."
         )
-        if not noise_rows and not sparsity_rows:
-            st.info(
-                "No four-region sweep results under `results/validation/four_region/`. "
-                "Run the quick sweep or use Mock demo."
+        noise_rows, sparsity_rows = mock_sweep_metric_rows()
+    elif source == "Load from results/":
+        # 0) Single four-region runs (per-region AUROC report) — what most runs produce.
+        run_summaries = discover_four_region_run_dirs(results_root)
+        if run_summaries:
+            labels = [str(p.parent.relative_to(results_root)) for p in run_summaries]
+            choices = ["— sweep (monotonic/orthogonal) —", *labels]
+            chosen = st.selectbox(
+                "Four-region run (single-run region report)",
+                choices,
+                key=f"{key_prefix}_run_pick",
+                help="Single four-region runs report region separability per signal. "
+                "Pick the first option for a multi-point sweep correlation instead.",
             )
+            if chosen != choices[0]:
+                summary_path = run_summaries[labels.index(chosen)]
+                try:
+                    summary = json.loads(summary_path.read_text())
+                except (json.JSONDecodeError, OSError, UnicodeDecodeError) as exc:
+                    st.error(f"Could not read `{summary_path}`: {exc}")
+                    return
+                _render_four_region_run_report(
+                    summary,
+                    key_prefix=f"{key_prefix}_disk",
+                    source_label=chosen,
+                    run_dir=summary_path.parent,
+                )
+                return
+
+        # 1) Dedicated four-region partition sweep runs, if any exist.
+        noise_rows, sparsity_rows = load_four_region_sweep_rows_from_disk(four_region_dir)
+        if noise_rows or sparsity_rows:
+            st.caption("Source: dedicated four-region runs under `results/validation/four_region/`.")
+        else:
+            # 2) Fall back to existing global sweeps as a proxy.
+            archs = sweep_csv_architectures(noise_csv, sparsity_csv)
+            have_csv = noise_csv.is_file() or sparsity_csv.is_file()
+            if not have_csv:
+                st.info(
+                    "No four-region runs and no global sweep aggregates found under "
+                    "`results/validation/` (`label_noise_sweep/metrics.csv`, "
+                    "`dataset_size_sweep/metrics.csv`). Run a sweep or use *Synthetic example*."
+                )
+            else:
+                arch = None
+                if archs:
+                    arch = st.selectbox(
+                        "Architecture",
+                        archs,
+                        key=f"{key_prefix}_csv_arch",
+                        help="Global sweeps store one curve per architecture.",
+                    )
+                noise_rows, sparsity_rows, aleatoric_metrics, epistemic_metrics = (
+                    load_four_region_rows_from_sweep_csvs(
+                        noise_csv=noise_csv if noise_csv.is_file() else None,
+                        sparsity_csv=sparsity_csv if sparsity_csv.is_file() else None,
+                        architecture=arch,
+                    )
+                )
+                st.caption(
+                    "Source: **global** label-noise + dataset-size sweeps "
+                    "(`results/validation/{label_noise,dataset_size}_sweep`), used as a "
+                    "proxy — these are not region-partitioned runs."
+                )
+                if not noise_rows and not sparsity_rows:
+                    st.warning(
+                        "Sweep CSVs found but no usable rows for this architecture "
+                        "(need `noise_percent` / `under_train_per_class` + uncertainty means)."
+                    )
     elif source == "Upload JSON":
+        from uqlab.evaluation.four_region_validation import is_four_region_run_summary
+
         uploaded = st.file_uploader(
-            "metrics JSON (`noise_rows` + `sparsity_rows`)",
+            "four-region run `summary.json`, or sweep JSON (`noise_rows` + `sparsity_rows`)",
             type=["json"],
-            key="sv_fr_json",
+            key=f"{key_prefix}_json",
+        )
+        st.caption(
+            "Accepts a single four-region run `summary.json` (per-region AUROC report), "
+            "a sweep report `{\"noise_rows\": […], \"sparsity_rows\": […]}`, a bare list "
+            "of rows, or a single sweep-row dict."
         )
         if uploaded is not None:
-            payload = json.loads(uploaded.getvalue().decode())
-            noise_rows = payload.get("noise_rows") or []
-            sparsity_rows = payload.get("sparsity_rows") or []
+            try:
+                payload = json.loads(uploaded.getvalue().decode())
+            except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+                st.error(f"Could not parse `{uploaded.name}` as JSON: {exc}")
+                payload = None
+            if payload is not None and is_four_region_run_summary(payload):
+                _render_four_region_run_report(
+                    payload, key_prefix=key_prefix, source_label=uploaded.name
+                )
+                return
+            if payload is not None:
+                noise_rows, sparsity_rows = _coerce_four_region_payload(payload)
+                if not noise_rows and not sparsity_rows:
+                    st.warning(
+                        f"`{uploaded.name}` is not a four-region run summary and has no "
+                        "sweep rows. Need `one_vs_rest_auroc`/`auroc_rows` (single run) or "
+                        "`noise_rows`/`sparsity_rows` (sweep)."
+                    )
     else:
-        mode = st.selectbox("Run mode", ["quick", "full"], key="sv_fr_mode")
+        from uqlab.evaluation.four_region_validation import FOUR_REGION_ARCHITECTURES
+
+        col_mode, col_arch = st.columns(2)
+        mode = col_mode.selectbox("Run mode", ["quick", "full"], key=f"{key_prefix}_mode")
+        architecture = col_arch.selectbox(
+            "Architecture",
+            list(FOUR_REGION_ARCHITECTURES),
+            key=f"{key_prefix}_run_arch",
+            help="cnn_mcdropout/resnet18_mcdropout train end-to-end; dinov2_mlp uses DINOv2 features.",
+        )
         col_n, col_s = st.columns(2)
-        run_noise = col_n.button("Run noise sweep", key="sv_fr_run_noise", type="primary")
-        run_sparse = col_s.button("Run sparsity sweep", key="sv_fr_run_sparse")
+        run_noise = col_n.button("Run noise sweep", key=f"{key_prefix}_run_noise", type="primary")
+        run_sparse = col_s.button("Run sparsity sweep", key=f"{key_prefix}_run_sparse")
         if run_noise or run_sparse:
             sweep_kind = "noise" if run_noise else "sparsity"
             with st.status(f"Running four-region {sweep_kind} sweep…", expanded=True) as status:
@@ -515,7 +759,8 @@ def _render_four_region_correlation_panel() -> None:
                 ok, output = run_four_region_sweep_inprocess(
                     sweep_kind,
                     mode,
-                    output_base=_PROJECT_ROOT / "results" / "validation" / "four_region",
+                    output_base=four_region_dir,
+                    architecture=architecture,
                     on_line=_on_line,
                 )
                 st.code("\n".join(log_lines[-80:]) or output[-4000:], language="text")
@@ -524,13 +769,18 @@ def _render_four_region_correlation_panel() -> None:
                     state="complete" if ok else "error",
                 )
         noise_rows, sparsity_rows = load_four_region_sweep_rows_from_disk(
-            _PROJECT_ROOT / "results" / "validation" / "four_region"
+            four_region_dir
         )
 
     if not noise_rows and not sparsity_rows:
         return
 
-    report = build_correlation_report(noise_rows, sparsity_rows)
+    report = build_correlation_report(
+        noise_rows,
+        sparsity_rows,
+        aleatoric_metrics=aleatoric_metrics,
+        epistemic_metrics=epistemic_metrics,
+    )
     col_a, col_b, col_c = st.columns(3)
     with col_a:
         st.metric("Monotonic checks", "PASS" if report.monotonic_passed else "FAIL")
@@ -557,7 +807,14 @@ def _render_four_region_correlation_panel() -> None:
     with st.expander("Raw JSON report", expanded=False):
         st.code(report_to_json(report), language="json")
 
-    plot_metrics = list(DEFAULT_ALEATORIC_METRICS[:2]) + list(DEFAULT_EPISTEMIC_METRICS[:2])
+    def _prioritize(metrics: list[str], preferred: list[str]) -> list[str]:
+        pref = [m for m in preferred if m in metrics]
+        return pref + [m for m in metrics if m not in pref]
+
+    plot_metrics = (
+        _prioritize(aleatoric_metrics, ["aleatoric_uncertainty"])[:2]
+        + _prioritize(epistemic_metrics, ["epistemic_uncertainty"])[:2]
+    )
     if noise_rows:
         noise_df = pd.DataFrame(noise_rows)
         if "noise_pct" in noise_df.columns:
@@ -571,7 +828,7 @@ def _render_four_region_correlation_panel() -> None:
                     markers=True,
                     title=f"{metric} vs noise %",
                 )
-                st.plotly_chart(fig, use_container_width=True, key=f"sv_fr_noise_{metric}")
+                st.plotly_chart(fig, use_container_width=True, key=f"{key_prefix}_noise_{metric}")
 
     if sparsity_rows:
         sparse_df = pd.DataFrame(sparsity_rows)
@@ -586,7 +843,11 @@ def _render_four_region_correlation_panel() -> None:
                     markers=True,
                     title=f"{metric} vs sparsity %",
                 )
-                st.plotly_chart(fig, use_container_width=True, key=f"sv_fr_sparse_{metric}")
+                st.plotly_chart(fig, use_container_width=True, key=f"{key_prefix}_sparse_{metric}")
+
+
+def _render_four_region_correlation_panel() -> None:
+    render_four_region_validation_panel(key_prefix="sv_fr", project_root=_PROJECT_ROOT)
 
 
 def render_signal_validation_tab() -> None:
@@ -621,4 +882,4 @@ def render_signal_validation_tab() -> None:
         )
 
 
-__all__ = ["render_signal_validation_tab", "SIGNAL_NAMES"]
+__all__ = ["render_signal_validation_tab", "render_four_region_validation_panel", "SIGNAL_NAMES"]

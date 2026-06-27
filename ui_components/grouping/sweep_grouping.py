@@ -128,8 +128,23 @@ def render_sweep_group_summary(
                 render_experiment_details_with_metrics,
             )
 
-            for exp in completed_exps:
-                with st.expander(f"🔬 {exp['name']} - Detailed Metrics", expanded=False):
-                    render_experiment_details_with_metrics(exp, show_explanation=False)
+            options = {exp["name"]: exp for exp in completed_exps}
+            pick = st.selectbox(
+                "Pick run for detailed metrics",
+                list(options.keys()),
+                key=f"sweep_run_pick_{group.get('sweep_group_id') or group.get('name') or swept_param}",
+            )
+            if pick:
+                render_experiment_details_with_metrics(
+                    options[pick], show_explanation=False
+                )
+                from uqlab.ui_components.results.disentanglement_score_viz import (
+                    render_disentanglement_score_panel,
+                )
+
+                render_disentanglement_score_panel(
+                    options[pick],
+                    key_prefix=f"sweep_disent_{group.get('sweep_group_id') or group.get('name') or swept_param}",
+                )
         else:
             st.info("💡 Detailed metrics will be available after experiments complete")

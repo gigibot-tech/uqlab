@@ -1,5 +1,5 @@
 """
-Streamlit 3-line sweep plot — thin UI over :mod:`uqlab.evaluation.pipeline.sweep_line_plot`.
+Streamlit 3-line sweep plot — thin UI over :mod:`uqlab.evaluation.reporting.sweep_line_plot`.
 
 Left Y: primary pool mean (swept axis) + optional dashed mirror; right Y: accuracy.
 """
@@ -14,7 +14,7 @@ import plotly.graph_objects as go
 import streamlit as st
 from plotly.subplots import make_subplots
 
-from uqlab.evaluation.pipeline.sweep_line_plot import (
+from uqlab.evaluation.reporting.sweep_line_plot import (
     FACET_PARAM_LABELS,
     build_sweep_line_plot,
     run_ids_for_experiments,
@@ -107,7 +107,8 @@ def render_plot_config_panel(plot_data: dict[str, Any]) -> None:
     if run_ids:
         st.caption(f"Runs: `{', '.join(str(r) for r in run_ids)}`")
 
-    with st.expander("Full spec (JSON)", expanded=False):
+    with st.expander("Plot spec (JSON)", expanded=False):
+        st.caption("Config used to draw this chart (x / signal / pools / run ids).")
         st.json(cfg)
 
 

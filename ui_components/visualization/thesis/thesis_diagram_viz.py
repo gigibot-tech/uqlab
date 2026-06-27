@@ -10,7 +10,7 @@ import matplotlib.pyplot as plt
 import streamlit as st
 
 from uqlab.shared.config.classification import ExperimentConfig
-from uqlab.evaluation.pipeline.thesis_diagram import (
+from uqlab.evaluation.reporting.thesis_diagram import (
     build_thesis_figure,
     experiment_config_from_workflow,
     load_thesis_diagram_inputs,
@@ -50,6 +50,7 @@ def render_thesis_diagram_panel(
     project_root: Path,
     key_prefix: str = "thesis_diagram",
     default_symbolic: bool = True,
+    panels: tuple[str, ...] = ("a", "b"),
 ) -> None:
     """Compact thesis schematic: generate once, preview + PDF/PNG download."""
     resolved_config = config
@@ -110,7 +111,7 @@ def render_thesis_diagram_panel(
     if inputs is None:
         return
 
-    fig = build_thesis_figure(inputs)
+    fig = build_thesis_figure(inputs, panels=panels)
     st.pyplot(fig, use_container_width=True)
 
     pdf_bytes = thesis_figure_to_bytes(fig, "pdf")

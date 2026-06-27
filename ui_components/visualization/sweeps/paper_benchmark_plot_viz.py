@@ -14,7 +14,7 @@ from typing import Any
 import plotly.graph_objects as go
 import streamlit as st
 
-from uqlab.evaluation.pipeline.paper_benchmark_plot import (
+from uqlab.evaluation.reporting.paper_benchmark_plot import (
     build_paper_benchmark_plot,
 )
 from uqlab.runtime_paths import experiments_root

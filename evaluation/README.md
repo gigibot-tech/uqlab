@@ -1,25 +1,36 @@
 # Evaluation module
 
-**Flow:** [`docs/UQLAB_FLOW.md`](../../../docs/UQLAB_FLOW.md)
+**Flow:** [`docs/UQLAB_FLOW.md`](../../../docs/UQLAB_FLOW.md)  
+**Package layout:** [`docs/architecture/PACKAGE_REDESIGN.md`](../../../docs/architecture/PACKAGE_REDESIGN.md)
 
-**Artifact contract:** [`artifacts.py`](../artifacts.py) (`EvalRunArtifacts`, `signal_table` reader)
-
-## Layout
+## Layout (2026-06)
 
 ```
 evaluation/
-├── README.md                 # ← you are here
-├── evaluator.py              # AUROC, CSV export, 3-way classifier helpers
-├── pipeline/                 # Campaign plots, paper score aggregation
-├── signals/                  # METRICS registry, sources, MC + attribution primitives
-│   ├── registry.py           # Single source of truth for signal names + tags
-│   ├── mc_dropout.py         # MC entropy / mutual_info / expected_entropy math
-│   └── README.md
-└── benchmarks/               # Paper metric bridge (disentanglement_error)
-    └── README.md
+├── signals/          # Per-sample signal computation (registry, sources, attribution backends)
+├── metrics/          # Pure scoring (scoring.py) + results.pt contract (artifacts.py)
+├── reporting/        # Plot payloads, campaign PDFs, CSV/markdown writers
+├── benchmarks/       # Paper disentangling bridge (DisentanglingModel port)
+├── four_region_validation.py
+└── pipeline/         # DEPRECATED shim — re-exports new paths only
 ```
 
-Archived: `dead_code/evaluation/` (legacy `signals.py`, `validators.py`, old benchmarks tree).
+Runner phases (`collect_uncertainty_signals`, `score_uncertainty_signals`, recovery) live under [`runner/phases/`](../runner/phases/).  
+Data setup (`prepare_experiment_data`) lives under [`data/setup.py`](../data/setup.py).
+
+## Common imports
+
+```python
+from uqlab.evaluation.metrics.scoring import binary_auroc, auroc_skip_reason
+from uqlab.evaluation.metrics.artifacts import EvalRunArtifacts
+from uqlab.evaluation.signals.registry import METRICS, build_signal_table
+from uqlab.evaluation.reporting.sweep_line_plot import build_sweep_line_plot
+from uqlab.runner.phases.eval import score_uncertainty_signals
+from uqlab.data.setup import prepare_experiment_data
+from uqlab.evaluation.benchmarks import FastPilotDisentanglingModel
+```
+
+Backward-compat shims: `uqlab.evaluation.metrics`, `uqlab.evaluation.artifacts`, `uqlab.evaluation.result_writers`, `uqlab.evaluation.pipeline.*`.
 
 ## Adding a signal
 
@@ -29,12 +40,4 @@ Archived: `dead_code/evaluation/` (legacy `signals.py`, `validators.py`, old ben
 
 ## Disentangling benchmark
 
-[`benchmarks/disentangling/`](benchmarks/disentangling/) implements the vendor `DisentanglingModel` port. Default pairing is **Paper mode** (`expected_entropy` + `mutual_info`); override with `predict_mode="signal"` or explicit `aleatoric_signal` / `epistemic_signal`. See [`benchmarks/README.md`](benchmarks/README.md) and [`docs/features/disentanglement-benchmark.md`](../../../docs/features/disentanglement-benchmark.md).
-
-## Common imports
-
-```python
-from uqlab.evaluation.metrics import binary_auroc, auroc_skip_reason
-from uqlab.evaluation.signals.registry import METRICS, build_signal_table
-from uqlab.evaluation.benchmarks import FastPilotDisentanglingModel
-```
+[`benchmarks/disentangling/`](benchmarks/disentangling/) implements the vendor `DisentanglingModel` port. See [`benchmarks/README.md`](benchmarks/README.md) and [`docs/features/disentanglement-benchmark.md`](../../../docs/features/disentanglement-benchmark.md).

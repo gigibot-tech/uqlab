@@ -106,6 +106,7 @@ def render_step4_evaluation(workflow: Dict[str, Any]) -> bool:
     selected: List[str] = []
 
     for col, (title, signal_ids) in zip(cols, groups.items()):
+        group_key = title.lower().replace(" ", "_")
         with col:
             st.markdown(f"**{title}**")
             for sid in signal_ids:
@@ -114,7 +115,7 @@ def render_step4_evaluation(workflow: Dict[str, Any]) -> bool:
                 label = sid
                 if sid.endswith("_ek_fak"):
                     label = f"{sid} (EK-FAC)"
-                if st.checkbox(label, value=default_on, disabled=disabled, key=f"step4_sig_{sid}"):
+                if st.checkbox(label, value=default_on, disabled=disabled, key=f"step4_sig_{group_key}_{sid}"):
                     selected.append(sid)
 
     all_signals = selected

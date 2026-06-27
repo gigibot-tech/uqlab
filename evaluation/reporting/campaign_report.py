@@ -12,17 +12,17 @@ from typing import Any, Literal
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
 
-from uqlab.evaluation.pipeline.campaign_config_timeline import (
+from uqlab.evaluation.reporting.campaign_config_timeline import (
     CampaignTimeline,
     append_config_timeline_pages,
     append_group_diff_page,
     build_campaign_timeline,
 )
-from uqlab.evaluation.pipeline.campaign_sections import (
+from uqlab.evaluation.reporting.campaign_sections import (
     CampaignSection,
     split_campaign_sections,
 )
-from uqlab.evaluation.pipeline.sweep_line_plot import (
+from uqlab.evaluation.reporting.sweep_line_plot import (
     build_sweep_line_plot,
     build_sweep_metrics_frame,
     list_plottable_signals,

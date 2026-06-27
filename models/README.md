@@ -13,6 +13,7 @@ models/
 ├── feature_extractors.py   # DINOv2 embedding extraction
 ├── training_scope.py       # End-to-end vs feature-space training flags
 ├── mc_dropout.py           # MC Dropout forward passes (inference only)
+├── training.py             # train_feature_model / train_image_model (paper fit)
 └── backbones/              # DINOv2 weight loading
 ```
 

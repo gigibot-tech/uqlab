@@ -11,7 +11,7 @@ Unlike the upstream Keras demo, **`fit` trains nothing in-process** and **`predi
 ```text
 calculate_disentanglement_error (vendor)
   └ model.fit(x, y, label_noise=…)     disentangling/fast_pilot.py
-       └ build_run_yaml → pipeline.run  runner/pipeline.py
+       └ build_run_yaml → run_from_yaml  runner/execute.py
             └ run_experiment_core       uqlab/runner/fast_pilot_core.py
                  train_*_model + collect_uncertainty_signals → results.pt
   └ model.predict_disentangling(x)     disentangling/fast_pilot.py
@@ -22,7 +22,7 @@ calculate_disentanglement_error (vendor)
 |------|------|
 | Vendor loops call `fit` / `predict` | [`vendor/disentanglement_error/label_noise.py`](../../vendor/disentanglement_error/label_noise.py), `decreasing_dataset.py` |
 | Bridge adapter | [`disentangling/fast_pilot.py`](disentangling/fast_pilot.py) |
-| Train + eval + write `results.pt` | [`runner/pipeline.py`](../../runner/pipeline.py) → `run_experiment_core` |
+| Train + eval + write `results.pt` | [`runner/execute.py`](../../runner/execute.py) → `run_experiment_core` |
 | `results.pt` → numpy vectors | [`artifacts.py`](../artifacts.py) (`EvalRunArtifacts`) |
 
 ## Disentangling bridge (`disentangling/`)
@@ -55,7 +55,7 @@ aleatorics = results.pt["signal_table"]["inverse_coherence_ek_fak"]
 epistemics = results.pt["signal_table"]["inverse_mass_ek_fak"]
 ```
 
-Each `fit()` ignores raw `X, y` and runs [`pipeline.run`](../../runner/pipeline.py) for one sweep point (label noise or dataset size). `predict_disentangling()` loads `{run_dir}/results.pt` (read-only; MC or the matching attribution backend must already be in `signal_table` — see bridge table in [`docs/UQLAB_FLOW.md`](../../../docs/UQLAB_FLOW.md)).
+Each `fit()` ignores raw `X, y` and runs [`run_from_yaml`](../../runner/execute.py) for one sweep point (label noise or dataset size). `predict_disentangling()` loads `{run_dir}/results.pt` (read-only; MC or the matching attribution backend must already be in `signal_table` — see bridge table in [`docs/UQLAB_FLOW.md`](../../../docs/UQLAB_FLOW.md)).
 
 **Vendor:** [`vendor/disentanglement_error/`](../../vendor/disentanglement_error/) — copied metric loops; bridge implements [`DisentanglingModel`](../../vendor/disentanglement_error/disentangling_model.py).
 

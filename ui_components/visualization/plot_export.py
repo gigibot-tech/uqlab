@@ -56,7 +56,7 @@ def matplotlib_png_from_line_payload(
     """Matplotlib fallback for dual-axis sweep line payloads."""
     import matplotlib.pyplot as plt
 
-    from uqlab.evaluation.pipeline.sweep_line_plot import resolve_sweep_trace_xy
+    from uqlab.evaluation.reporting.sweep_line_plot import resolve_sweep_trace_xy
 
     fig, ax_left = plt.subplots(figsize=(8.5, 4.2))
     ax_right = ax_left.twinx()

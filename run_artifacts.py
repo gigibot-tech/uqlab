@@ -1,12 +1,20 @@
 """
-Single place to read outputs from one ``run_fast_uncertainty_classification`` run.
+Single place to read **and write** outputs from one fast-pilot run.
 
 Every run folder should contain (when successful):
 
-- ``summary.json`` — eval sizes, one-vs-rest AUROC, config
-- ``experiment.log`` — full stdout/stderr from the run (via ``runner.pipeline``)
-- ``per_sample_signals.csv`` — one row per eval sample (group, dataset_index, labels, signals)
-- ``results.pt`` — full tensors (optional duplicate of the same evaluation)
+| File | Writer | Paper analogue |
+|------|--------|----------------|
+| ``training_data.csv`` | :func:`persist_run_outputs` | train split stats |
+| ``zwischen/00_eval_setup.pt`` | :func:`save_zwischen_result` (orchestrator) | eval indices |
+| ``zwischen/01..05_*.pt`` | ``runner.phases.eval.collect_uncertainty_signals`` | MC / attribution |
+| ``per_sample_signals.csv`` | ``runner.phases.eval.score_uncertainty_signals`` | ``predict_disentangling`` columns |
+| ``summary.json`` / ``summary.md`` | :func:`persist_run_outputs` | run record |
+| ``signal_formulas.json`` | :func:`persist_run_outputs` | signal provenance |
+| ``checkpoint.pt`` | :func:`save_run_checkpoint` | ``model.fit`` weights |
+| ``results.pt`` | :func:`export_results_pt` | bridge for ``predict_disentangling`` |
+
+See ``docs/features/PAPER_FLOW.md`` for the Keras demo mapping.
 
 Use :func:`load_run_directory` to inspect a run; use :func:`metrics_row_from_run`
 when building ``metrics.csv`` rows.
@@ -207,13 +215,17 @@ def _artifacts_from_results_pt(
     )
 
 
-def load_per_sample_table(run_dir: Path, *, max_rows: int = 500) -> pd.DataFrame | None:
-    """Load ``per_sample_signals.csv`` if present."""
+def load_per_sample_table(run_dir: Path, *, max_rows: int | None = 500) -> pd.DataFrame | None:
+    """Load ``per_sample_signals.csv`` if present.
+
+    Pass ``max_rows=None`` to load the full table (required for per-group aggregation
+    when eval pools are written clean-first).
+    """
     path = Path(run_dir) / "per_sample_signals.csv"
     if not path.is_file():
         return None
     df = pd.read_csv(path)
-    if len(df) > max_rows:
+    if max_rows is not None and len(df) > max_rows:
         return df.head(max_rows)
     return df
 
@@ -535,3 +547,232 @@ def _signal_means_from_results_pt(results_pt: Path) -> dict[str, float]:
         )
 
     return metrics
+
+
+@dataclass(frozen=True)
+class WrittenArtifacts:
+    """Paths written during :func:`persist_run_outputs` (disk contract)."""
+
+    training_data_csv: Path | None = None
+    eval_setup_zwischen: Path | None = None
+    per_sample_signals_csv: Path | None = None
+    summary_json: Path | None = None
+    summary_md: Path | None = None
+    signal_formulas_json: Path | None = None
+    checkpoint_pt: Path | None = None
+    results_pt: Path | None = None
+
+    def labeled_paths(self) -> list[tuple[str, Path | None]]:
+        return [
+            ("training_data.csv", self.training_data_csv),
+            ("zwischen/00_eval_setup", self.eval_setup_zwischen),
+            ("per_sample_signals.csv", self.per_sample_signals_csv),
+            ("summary.json", self.summary_json),
+            ("summary.md", self.summary_md),
+            ("signal_formulas.json", self.signal_formulas_json),
+            ("checkpoint.pt", self.checkpoint_pt),
+            ("results.pt", self.results_pt),
+        ]
+
+
+def save_run_checkpoint(
+    results_dir: Path,
+    *,
+    model,
+    prior_epoch_loaded: int,
+    epochs: int,
+    hidden_dim: int,
+    dropout: float,
+    num_classes: int,
+    dinov2_model: str,
+) -> Path | None:
+    """Write ``checkpoint.pt`` (model weights for export/resume)."""
+    import torch
+
+    model.eval()
+    for module in model.modules():
+        module._forward_hooks.clear()
+        module._forward_pre_hooks.clear()
+        module._backward_hooks.clear()
+
+    checkpoint = {
+        "model": model,
+        "model_state_dict": model.state_dict(),
+        "epoch": prior_epoch_loaded + epochs,
+        "loss": 0.0,
+        "config": {
+            "hidden_dim": hidden_dim,
+            "dropout": dropout,
+            "num_classes": num_classes,
+            "dinov2_model": dinov2_model,
+        },
+    }
+    path = results_dir / "checkpoint.pt"
+    try:
+        torch.save(checkpoint, path)
+    except Exception:
+        return None
+    return path
+
+
+def export_results_pt(
+    results_dir: Path,
+    *,
+    uq: dict,
+    mean_pred_det,
+    train_dataset,
+    eval_inputs,
+    mode: str,
+    eval_clean_labels,
+    eval_is_noisy,
+    eval_group_labels,
+    clean_eval_pack: dict,
+    aleatoric_eval_pack: dict,
+    epistemic_eval_pack: dict,
+    ood_eval_pack: dict | None,
+    signal_table: dict,
+    auroc_rows: list,
+) -> Path | None:
+    """Write ``results.pt`` for sweep pools and ``ExperimentDisentanglingModel`` bridge."""
+    import torch
+
+    mean_for_results = uq.get("mean_prediction") if uq else mean_pred_det
+    if mean_for_results is None:
+        raise TypeError("collect_uncertainty_signals() returned no mean predictions for results export")
+
+    eval_packs_for_export = [clean_eval_pack, aleatoric_eval_pack, epistemic_eval_pack]
+    if ood_eval_pack is not None and len(ood_eval_pack.get("features", [])) > 0:
+        eval_packs_for_export.append(ood_eval_pack)
+
+    results_data = {
+        "predictions": mean_for_results.argmax(dim=1),
+        "confidences": mean_for_results.max(dim=1).values,
+        "mean_prediction_deterministic": mean_pred_det,
+        "train_embeddings": getattr(train_dataset, "features", None),
+        "train_images": eval_inputs.new_empty((0,)) if not hasattr(train_dataset, "features") else None,
+        "train_labels": train_dataset.clean_labels,
+        "train_noisy_labels": train_dataset.targets,
+        "train_is_noisy": train_dataset.is_noisy,
+        "train_indices": train_dataset.original_indices,
+        "eval_embeddings": eval_inputs if mode == "embeddings" else None,
+        "eval_images": eval_inputs if mode == "images" else None,
+        "eval_clean_labels": eval_clean_labels,
+        "eval_noisy_labels": torch.cat(
+            [p["noisy_labels"] for p in eval_packs_for_export], dim=0
+        ),
+        "eval_is_noisy": eval_is_noisy,
+        "eval_group_labels": eval_group_labels,
+        "eval_indices": torch.cat(
+            [p["original_indices"] for p in eval_packs_for_export], dim=0
+        ),
+        "signal_table": signal_table,
+        "auroc_rows": auroc_rows,
+    }
+    path = results_dir / "results.pt"
+    try:
+        torch.save(results_data, path)
+    except Exception:
+        return None
+    return path
+
+
+def persist_run_outputs(
+    results_dir: Path,
+    *,
+    train_dataset,
+    config_dict: dict,
+    summary: dict,
+    signal_formulas: dict,
+    config_ns,
+    split_spec,
+    auroc_rows: list,
+    clf_rows: list,
+    per_sample_csv_path: Path | None,
+    eval_setup_zwischen_path: Path | None,
+    model,
+    prior_epoch_loaded: int,
+    epochs: int,
+    hidden_dim: int,
+    dropout: float,
+    num_classes: int,
+    dinov2_model: str,
+    uq: dict,
+    mean_pred_det,
+    eval_inputs,
+    mode: str,
+    eval_clean_labels,
+    eval_is_noisy,
+    eval_group_labels,
+    clean_eval_pack: dict,
+    aleatoric_eval_pack: dict,
+    epistemic_eval_pack: dict,
+    ood_eval_pack: dict | None,
+    signal_table: dict,
+) -> WrittenArtifacts:
+    """Persist all post-eval disk artifacts for one run."""
+    from uqlab.evaluation.reporting.result_writers import (
+        persist_experiment_summaries,
+        save_training_data_csv,
+    )
+
+    results_dir.mkdir(parents=True, exist_ok=True)
+
+    training_csv = results_dir / "training_data.csv"
+    save_training_data_csv(
+        output_path=training_csv,
+        train_dataset=train_dataset,
+        config=config_dict,
+    )
+
+    persist_experiment_summaries(
+        results_dir,
+        summary=summary,
+        args=config_ns,
+        split_spec=split_spec,
+        train_size=len(train_dataset),
+        eval_sizes=summary["eval_sizes"],
+        auroc_rows=auroc_rows,
+        clf_rows=clf_rows,
+    )
+
+    formulas_path = save_signal_formula_manifest(results_dir, signal_formulas)
+
+    checkpoint_path = save_run_checkpoint(
+        results_dir,
+        model=model,
+        prior_epoch_loaded=prior_epoch_loaded,
+        epochs=epochs,
+        hidden_dim=hidden_dim,
+        dropout=dropout,
+        num_classes=num_classes,
+        dinov2_model=dinov2_model,
+    )
+
+    results_path = export_results_pt(
+        results_dir,
+        uq=uq,
+        mean_pred_det=mean_pred_det,
+        train_dataset=train_dataset,
+        eval_inputs=eval_inputs,
+        mode=mode,
+        eval_clean_labels=eval_clean_labels,
+        eval_is_noisy=eval_is_noisy,
+        eval_group_labels=eval_group_labels,
+        clean_eval_pack=clean_eval_pack,
+        aleatoric_eval_pack=aleatoric_eval_pack,
+        epistemic_eval_pack=epistemic_eval_pack,
+        ood_eval_pack=ood_eval_pack,
+        signal_table=signal_table,
+        auroc_rows=auroc_rows,
+    )
+
+    return WrittenArtifacts(
+        training_data_csv=training_csv,
+        eval_setup_zwischen=eval_setup_zwischen_path,
+        per_sample_signals_csv=per_sample_csv_path,
+        summary_json=results_dir / "summary.json",
+        summary_md=results_dir / "summary.md",
+        signal_formulas_json=formulas_path,
+        checkpoint_pt=checkpoint_path,
+        results_pt=results_path,
+    )

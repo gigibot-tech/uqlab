@@ -7,7 +7,7 @@ from typing import Any, Iterable
 
 import numpy as np
 
-from uqlab.evaluation.artifacts import EvalRunArtifacts
+from uqlab.evaluation.metrics.artifacts import EvalRunArtifacts
 from uqlab.shared.config.signals import (
     bridge_job_requirements,
     iter_disentangling_bridge_pairs,

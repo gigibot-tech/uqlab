@@ -6,7 +6,7 @@ from typing import Any
 
 import streamlit as st
 
-from uqlab.evaluation.pipeline.campaign_report import (
+from uqlab.evaluation.reporting.campaign_report import (
     CampaignExportBundle,
     PdfLayout,
     build_multi_campaign_report_pdf,

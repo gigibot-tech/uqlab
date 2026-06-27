@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional
 
 import streamlit as st
 
-from uqlab.evaluation.pipeline.checkpoint_arsenal import (
+from uqlab.evaluation.reporting.checkpoint_arsenal import (
     CheckpointArsenal,
     arsenal_cache_key,
     build_checkpoint_arsenal,

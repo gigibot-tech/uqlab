@@ -23,6 +23,11 @@ def repository_root() -> Path:
     return _REPO_ROOT
 
 
+def configs_dir() -> Path:
+    """Experiment YAML configs (``configs/experiment``, ``configs/test``, …)."""
+    return repository_root() / "configs"
+
+
 def data_root() -> Path:
     """Root directory for DB, experiment outputs, and optional local artifacts."""
     raw = os.environ.get("UQLAB_DATA_DIR", "").strip()

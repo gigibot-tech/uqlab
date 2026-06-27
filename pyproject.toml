@@ -37,6 +37,7 @@ dependencies = [
     "tqdm>=4.65.0",
     "pydantic>=2.0.0",
     "pyyaml>=6.0",
+    "scipy>=1.10.0",
 ]
 
 [project.optional-dependencies]
@@ -63,8 +64,13 @@ Homepage = "https://github.com/gigibot-tech/uqlab"
 Repository = "https://github.com/gigibot-tech/uqlab"
 Issues = "https://github.com/gigibot-tech/uqlab/issues"
 
-[tool.setuptools]
-packages = ["uqlab"]
+[tool.setuptools.package-dir]
+"uqlab" = "."
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["uqlab*"]
+exclude = ["tests*", "docs*", "*.egg-info", "build", "dist"]
 
 [tool.setuptools.package-data]
 uqlab = ["py.typed"]

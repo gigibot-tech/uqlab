@@ -16,14 +16,14 @@ from matplotlib.backends.backend_pdf import PdfPages
 
 import yaml
 
-from uqlab.evaluation.pipeline.sweep_line_plot import (
+from uqlab.evaluation.reporting.sweep_line_plot import (
     build_sweep_metrics_frame,
     filter_metrics_frame,
     infer_sweep_kind,
     resolve_x_col,
     run_ids_for_experiments,
 )
-from uqlab.evaluation.pipeline.config_diff import (
+from uqlab.evaluation.reporting.config_diff import (
     ConfigChange,
     find_tracked_differences,
     format_value as _format_value,

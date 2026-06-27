@@ -8,15 +8,10 @@ from __future__ import annotations
 
 from typing import Any, Callable, Dict, List, Optional
 
-import pandas as pd
 import requests
 import streamlit as st
 
-from uqlab.ui_components.grouping import (
-    group_experiments_intelligently,
-    render_sweep_group_summary,
-)
-from uqlab.ui_components.grouping.campaign_format import format_sweep_campaign_header
+from uqlab.ui_components.grouping import group_experiments_intelligently
 from uqlab.ui_components.results.training_data_inspection import (
     parse_training_data_stats,
     render_training_data_stats,
@@ -28,6 +23,7 @@ from uqlab.ui_components.progressive.api_client import (
     summarize_recoverability_tiers,
 )
 from uqlab.ui_components.ui_debug import sync_results_auto_refresh, ui_on
+from uqlab.ui_components.style import section_header, status_pill, status_pills_row
 
 
 def _deferred_rerun_after(seconds: int) -> None:
@@ -102,12 +98,11 @@ def render_experiment_stats_footer(
     total = len(experiments)
 
     st.markdown(
-        (
-            "<p style='font-size:0.72rem;color:#888;text-align:center;margin:4px 0 0 0'>"
-            f"Queued {queued} · Running {running} · Completed {completed} · "
-            f"Failed {failed} · Total {total}"
-            "</p>"
-        ),
+        f'<div class="uqlab-pills">{status_pill(f"Queued {queued}", "queued")}'
+        f'{status_pill(f"Running {running}", "running")}'
+        f'{status_pill(f"Completed {completed}", "completed")}'
+        f'{status_pill(f"Failed {failed}", "failed")}'
+        f'{status_pill(f"Total {total}", "muted")}</div>',
         unsafe_allow_html=True,
     )
 
@@ -123,14 +118,92 @@ def render_running_progress(experiments: List[Dict[str, Any]]) -> None:
         st.progress(min(max(progress, 0.0), 1.0), text=f"{label} — {progress:.1%}")
 
 
+def _experiment_status_counts(experiments: List[Dict[str, Any]]) -> Dict[str, int]:
+    counts: Dict[str, int] = {}
+    for exp in experiments:
+        status = exp.get("status", "unknown")
+        counts[status] = counts.get(status, 0) + 1
+    return counts
+
+
+def _live_status_has_content(
+    experiments: List[Dict[str, Any]],
+    *,
+    api_base_url: str,
+    get_headers_func: Callable[[], Dict],
+) -> bool:
+    if ui_on("results_running_progress") and any(
+        e.get("status") == "running" for e in experiments
+    ):
+        return True
+    if ui_on("results_auto_refresh_ui"):
+        return True
+    if ui_on("results_bulk_delete"):
+        deletable = ("failed", "running", "queued")
+        counts = _experiment_status_counts(experiments)
+        if sum(counts.get(s, 0) for s in deletable) > 0:
+            return True
+    if ui_on("results_bulk_recover"):
+        try:
+            recoverability = fetch_recoverability(
+                api_base_url,
+                get_headers_func,
+                status="failed",
+            )
+            tier_counts = summarize_recoverability_tiers(recoverability)
+            if tier_counts.get("zwischen_finalize") or tier_counts.get("db_sync"):
+                return True
+        except requests.exceptions.RequestException:
+            pass
+    return False
+
+
+def _render_per_run_details(
+    experiments: List[Dict[str, Any]],
+    *,
+    key_prefix: str,
+) -> None:
+    if not ui_on("results_experiment_details"):
+        return
+    completed = [
+        e for e in experiments
+        if e.get("status") == "completed" and e.get("best_signals_json")
+    ]
+    if not completed:
+        return
+    st.markdown("#### Per-run details")
+    st.caption(
+        "Pick any completed run — sweep campaign, four-region, or standalone — "
+        "for signal tables, bar charts, and disentanglement diagnostics."
+    )
+    from uqlab.ui_components.results.experiment_details import (
+        render_experiment_details_with_metrics,
+    )
+    from uqlab.ui_components.results.disentanglement_score_viz import (
+        render_disentanglement_score_panel,
+    )
+
+    options = {exp["name"]: exp for exp in completed}
+    pick = st.selectbox(
+        "Run",
+        list(options.keys()),
+        key=f"{key_prefix}per_run_pick",
+    )
+    if pick:
+        render_experiment_details_with_metrics(options[pick], show_explanation=False)
+        render_disentanglement_score_panel(
+            options[pick],
+            key_prefix=f"{key_prefix}per_run_disent",
+        )
+
+
 def _any_results_subpanel_on() -> bool:
     return any(
         ui_on(key)
         for key in (
             "results_live_status",
             "results_sweep_analysis",
-            "results_sweep_campaigns",
-            "results_standalone_table",
+            "results_experiment_details",
             "results_training_data",
         )
     )
@@ -176,17 +249,35 @@ def render_experiment_results_panel(
         )
         return auto_refresh
 
+    status_counts = _experiment_status_counts(experiments)
+    status_pills_row(status_counts)
+
     # --- 1. Live status ---
     if ui_on("results_live_status"):
-        st.markdown("### 1 · Live status")
+        has_live = _live_status_has_content(
+            experiments,
+            api_base_url=api_base_url,
+            get_headers_func=get_headers_func,
+        )
+        if has_live:
+            section_header(
+                "1",
+                "Live status",
+                "Queued/running runs, refresh controls, bulk delete/recover.",
+            )
+        else:
+            st.markdown(
+                f'<div class="uqlab-pills">{status_pill("No live activity", "muted")}</div>',
+                unsafe_allow_html=True,
+            )
 
-        if ui_on("results_running_progress"):
+        if has_live and ui_on("results_running_progress"):
             render_running_progress(experiments)
 
         if not ui_on("results_auto_refresh_schedule"):
             auto_refresh = False
 
-        if ui_on("results_auto_refresh_ui"):
+        if has_live and ui_on("results_auto_refresh_ui"):
             c1, c2, c3 = st.columns(3)
             with c1:
                 auto_refresh = st.checkbox(
@@ -202,7 +293,7 @@ def render_experiment_results_panel(
                     auto_refresh = False
                     st.rerun()
 
-        if ui_on("results_bulk_delete"):
+        if has_live and ui_on("results_bulk_delete"):
             status_counts: Dict[str, int] = {}
             for exp in experiments:
                 s = exp.get("status", "unknown")
@@ -225,7 +316,7 @@ def render_experiment_results_panel(
                         st.success(f"Deleted {deleted} {status} experiment(s)")
                         st.rerun()
 
-        if ui_on("results_bulk_recover"):
+        if has_live and ui_on("results_bulk_recover"):
             try:
                 recoverability = fetch_recoverability(
                     api_base_url,
@@ -285,82 +376,41 @@ def render_experiment_results_panel(
                     )
                     st.rerun()
 
-    sweep_groups, standalone = group_experiments_intelligently(experiments, min_group_size=3)
-    total_in_sweeps = sum(len(g["experiments"]) for g in sweep_groups)
+    sweep_groups, _standalone = group_experiments_intelligently(experiments, min_group_size=3)
 
-    # --- 2. Sweep analysis (3-line plots) ---
-    if ui_on("results_sweep_analysis") and sweep_groups and sweep_analysis_renderer:
+    show_analysis = (
+        ui_on("results_sweep_analysis")
+        or ui_on("results_experiment_details")
+        or ui_on("results_sweep_campaigns")
+        or ui_on("results_standalone_table")
+    )
+    if show_analysis:
         st.markdown("---")
-        st.markdown("### 2 · Sweep analysis (3-line plots)")
-        st.caption(
-            "Pool means on epistemic / aleatoric eval packs + accuracy. "
-            "AUROC in §3 is a **different** metric (discrimination, not these Y values)."
+        section_header(
+            "2",
+            "Analysis & sweeps",
+            "Paper sweeps (Fig 3/4 pool means), four-region validation, and per-run metrics. "
+            "AUROC = separability; pool-mean Y values = averages over eval pools.",
         )
-        try:
-            sweep_analysis_renderer(sweep_groups, key_prefix=f"{key_prefix}sweep_hub")
-        except Exception as exc:
-            st.warning(f"Sweep analysis unavailable: {exc}")
-
-    # --- 3. Campaign tables ---
-    if ui_on("results_sweep_campaigns"):
-        st.markdown("---")
-        st.markdown("### 3 · Sweep campaigns")
-        st.caption(
-            f"{len(sweep_groups)} campaign(s) ({total_in_sweeps} runs) · "
-            f"{len(standalone)} standalone experiment(s)"
-        )
-
-        if sweep_groups:
-            for i, group in enumerate(sweep_groups):
-                with st.expander(
-                    format_sweep_campaign_header(
-                        group,
-                        suffix=f"{len(group['experiments'])} runs",
-                    ),
-                    expanded=(i == 0 and ui_on("results_experiment_details")),
-                ):
-                    render_sweep_group_summary(
-                        group,
-                        show_details=ui_on("results_experiment_details"),
-                        show_inline_plot=False,
-                    )
-        else:
-            st.caption("No sweep campaigns detected yet (need ≥3 similar runs).")
-
-    if ui_on("results_standalone_table") and standalone:
-        st.markdown("#### 🧪 Standalone experiments")
-        rows = []
-        for exp in standalone:
-            rows.append({
-                "ID": str(exp["id"])[:8],
-                "Name": exp["name"],
-                "Status": exp["status"],
-                "Progress": f"{exp.get('progress', 0):.1%}",
-                "Aleatoric": f"{exp['aleatoric_auroc']:.3f}" if exp.get("aleatoric_auroc") else "N/A",
-                "Epistemic": f"{exp['epistemic_auroc']:.3f}" if exp.get("epistemic_auroc") else "N/A",
-            })
-        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
-
-        if ui_on("results_experiment_details"):
-            completed = [
-                e for e in standalone
-                if e.get("status") == "completed" and e.get("best_signals_json")
-            ]
-            if completed:
-                from uqlab.ui_components.results.experiment_details import (
-                    render_experiment_details_with_metrics,
-                )
-
-                for i, exp in enumerate(completed):
-                    with st.expander(
-                        f"🔬 {exp['name']} — metrics",
-                        expanded=(i == 0),
-                    ):
-                        render_experiment_details_with_metrics(exp, show_explanation=False)
+        if ui_on("results_sweep_analysis") and sweep_groups and sweep_analysis_renderer:
+            try:
+                sweep_analysis_renderer(sweep_groups, key_prefix=f"{key_prefix}sweep_hub")
+            except Exception as exc:
+                st.warning(f"Sweep analysis unavailable: {exc}")
+        elif ui_on("results_sweep_analysis") and not sweep_groups:
+            st.info(
+                "No sweep campaigns yet (need ≥3 similar runs). "
+                "Four-region and standalone runs appear in **Per-run details** below."
+            )
+        _render_per_run_details(experiments, key_prefix=key_prefix)
 
     if ui_on("results_training_data"):
         st.markdown("---")
-        st.markdown("### 4 · Training data inspection")
+        section_header(
+            "3",
+            "Training data inspection",
+            "On-disk training split stats per completed run.",
+        )
         completed_with_data = [
             e for e in experiments
             if e.get("status") == "completed" and parse_training_data_stats(str(e.get("id")))

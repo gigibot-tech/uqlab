@@ -13,8 +13,8 @@ from typing import Dict, List, Optional, Tuple
 
 import streamlit as st
 
-UI_DEBUG_DEFAULTS_VERSION = 4
-UI_DEBUG_DEFAULTS_VERSION_KEY = "ui_debug_defaults_v4"
+UI_DEBUG_DEFAULTS_VERSION = 6
+UI_DEBUG_DEFAULTS_VERSION_KEY = "ui_debug_defaults_v6"
 
 # Results sub-toggles that stay off when results are enabled by default.
 RESULTS_DEFAULTS_OFF: frozenset[str] = frozenset({
@@ -46,8 +46,8 @@ UI_DEBUG_REGISTRY: Dict[str, Tuple[str, bool]] = {
     # Results — on by default except per-run details + training data
     "results_section": ("Results · entire section", True),
     "results_live_status": ("Results · §1 live status", True),
-    "results_sweep_analysis": ("Results · §2 sweep analysis (3-line plots)", True),
-    "results_sweep_campaigns": ("Results · §3 campaign expanders", True),
+    "results_sweep_analysis": ("Results · §2 analysis & sweeps", True),
+    "results_sweep_campaigns": ("Results · §3 campaigns (merged into §2)", True),
     "results_sweep_groups": ("Results · sweep groups (legacy parent)", True),
     "results_local_presets": ("Results · local preset sweeps", True),
     "results_local_viz": ("Results · local validation viz", True),
@@ -57,9 +57,11 @@ UI_DEBUG_REGISTRY: Dict[str, Tuple[str, bool]] = {
     "results_auto_refresh_schedule": ("Results · 5s auto-rerun (JS)", False),
     "results_bulk_delete": ("Results · bulk delete", True),
     "results_bulk_recover": ("Results · bulk recover", True),
-    "results_standalone_table": ("Results · standalone table", True),
+    "results_standalone_table": ("Results · standalone table (merged into §2)", True),
     "results_experiment_details": ("Results · per-run details + bar charts", False),
-    "results_training_data": ("Results · training data inspection", False),
+    "results_disentanglement_score": ("Results · per-run disentanglement score", True),
+    "results_four_region": ("Results · four-region validation", True),
+    "results_training_data": ("Results · §3 training data inspection", False),
     "results_batch_ui": ("Results · UI batch experiments", True),
 }
 
@@ -81,7 +83,9 @@ UI_DEBUG_PARENT: Dict[str, str] = {
     "results_standalone_table": "results_section",
     "results_training_data": "results_section",
     "results_batch_ui": "results_section",
-    "results_experiment_details": "results_sweep_campaigns",
+    "results_experiment_details": "results_sweep_analysis",
+    "results_disentanglement_score": "results_experiment_details",
+    "results_four_region": "results_sweep_analysis",
     # results_status_metrics: independent footer toggle (still turned off by Results off)
 }
 
@@ -119,10 +123,12 @@ UI_DEBUG_SECTIONS: List[Tuple[str, List[str]]] = [
             "results_bulk_delete",
             "results_bulk_recover",
             "results_sweep_analysis",
+            "results_four_region",
             "results_sweep_campaigns",
             "results_sweep_groups",
             "results_standalone_table",
             "results_experiment_details",
+            "results_disentanglement_score",
             "results_training_data",
             "results_status_metrics",
             "results_batch_ui",
@@ -265,6 +271,10 @@ def sync_results_auto_refresh() -> None:
     _apply_parent_cascade_rules()
     if not _enabled_raw("results_section") or not _enabled_raw("results_auto_refresh_schedule"):
         st.session_state["results_auto_refresh"] = False
+    # Heavy per-run details + 5s JS rerun is a bad combo — keep schedule off.
+    if ui_on("results_experiment_details") and _enabled_raw("results_auto_refresh_schedule"):
+        st.session_state[widget_key("results_auto_refresh_schedule")] = False
+        st.session_state["results_auto_refresh"] = False
 
 
 def set_all(enabled: bool) -> None:
@@ -315,6 +325,10 @@ def _render_debug_checkbox(component_key: str, label: str) -> None:
     if disabled:
         st.session_state[wkey] = False
     st.checkbox(label, key=wkey, disabled=disabled)
+    if disabled:
+        parent_key = UI_DEBUG_PARENT[component_key]
+        parent_label = UI_DEBUG_REGISTRY[parent_key][0]
+        st.caption(f"Enable parent: {parent_label}")
 
 
 def render_ui_debug_panel(*, in_sidebar: bool = True) -> None:
@@ -336,15 +350,18 @@ def render_ui_debug_panel(*, in_sidebar: bool = True) -> None:
                 set_all(True)
                 st.session_state["results_auto_refresh"] = False
                 st.rerun()
+                return
         with c2:
             if st.button("Results off", key="ui_dbg_results_off", use_container_width=True):
                 set_results_off()
                 st.rerun()
+                return
         with c3:
             if st.button("Results defaults", key="ui_dbg_results_defaults", use_container_width=True):
                 _apply_results_defaults()
                 st.session_state[UI_DEBUG_DEFAULTS_VERSION_KEY] = UI_DEBUG_DEFAULTS_VERSION
                 st.rerun()
+                return
 
         disabled = sum(1 for k in UI_DEBUG_REGISTRY if not _enabled_raw(k))
         if disabled:

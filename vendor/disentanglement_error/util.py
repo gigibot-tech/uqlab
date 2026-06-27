@@ -6,7 +6,6 @@ from typing import List
 
 import numpy as np
 import pandas as pd
-import torch
 
 
 def json_results_to_df(json_results, json_config):
@@ -96,6 +95,7 @@ class AverageMeter(object):
         self.avg = self.sum / self.count
 
     def all_reduce(self):
+        import torch
         import torch.distributed as dist
 
         if self.use_accel and torch.cuda.is_available():

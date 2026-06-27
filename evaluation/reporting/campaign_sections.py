@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from uqlab.evaluation.pipeline.sweep_line_plot import (
+from uqlab.evaluation.reporting.sweep_line_plot import (
     SWEEP_KIND_DATASET_SIZE,
     SWEEP_KIND_LABEL_NOISE,
     run_ids_for_experiments,

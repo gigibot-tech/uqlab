@@ -17,11 +17,11 @@ from matplotlib.patches import FancyArrowPatch, FancyBboxPatch
 
 from uqlab.data.dataset_registry import get_dataset_spec
 from uqlab.shared.config.classification import ExperimentConfig
-from uqlab.evaluation.pipeline.experiment_setup import (
+from uqlab.runner.phases.config_view import (
     RunConfigView,
     extract_run_config,
 )
-from uqlab.evaluation.pipeline.sweep_plot_pools import (
+from uqlab.evaluation.reporting.sweep_plot_pools import (
     PoolExpectations,
     pool_expectations_from_data_config,
 )
@@ -110,7 +110,7 @@ def load_thesis_diagram_inputs(
 
     split_counts: dict[str, int] | None = None
     if empirical:
-        from uqlab.evaluation.pipeline.data_setup import prepare_experiment_data
+        from uqlab.data.setup import prepare_experiment_data
 
         data_ctx = prepare_experiment_data(config, project_root, seed=seed)
         spec = data_ctx.split_spec
@@ -488,8 +488,18 @@ def render_signal_panel(ax, inputs: ThesisDiagramInputs) -> None:
         )
 
 
-def build_thesis_figure(inputs: ThesisDiagramInputs) -> plt.Figure:
-    """Two-panel thesis schematic (matplotlib Figure)."""
+def build_thesis_figure(
+    inputs: ThesisDiagramInputs,
+    *,
+    panels: tuple[str, ...] = ("a", "b"),
+) -> plt.Figure:
+    """Thesis schematic (matplotlib Figure). ``panels``: ``a`` = config/pools, ``b`` = signal pipeline."""
+    normalized = tuple(p.lower() for p in panels) or ("a", "b")
+    show_a = "a" in normalized
+    show_b = "b" in normalized
+    if not show_a and not show_b:
+        show_a, show_b = True, True
+
     plt.rcParams.update(
         {
             "font.family": "sans-serif",
@@ -498,18 +508,39 @@ def build_thesis_figure(inputs: ThesisDiagramInputs) -> plt.Figure:
             "mathtext.fontset": "dejavusans",
         }
     )
-    fig = plt.figure(figsize=(11.0, 9.5), dpi=100)
-    fig.suptitle(
-        "Uncertainty quantification experiment schematic",
-        fontsize=14,
-        fontweight="bold",
-        y=0.98,
-    )
-    gs = fig.add_gridspec(2, 1, height_ratios=[1.0, 1.15], top=0.93, bottom=0.04, hspace=0.42)
-    ax_a = fig.add_subplot(gs[0])
-    ax_b = fig.add_subplot(gs[1])
-    render_split_panel(ax_a, inputs)
-    render_signal_panel(ax_b, inputs)
+    if show_a and show_b:
+        fig = plt.figure(figsize=(11.0, 9.5), dpi=100)
+        fig.suptitle(
+            "Uncertainty quantification experiment schematic",
+            fontsize=14,
+            fontweight="bold",
+            y=0.98,
+        )
+        gs = fig.add_gridspec(2, 1, height_ratios=[1.0, 1.15], top=0.93, bottom=0.04, hspace=0.42)
+        ax_a = fig.add_subplot(gs[0])
+        ax_b = fig.add_subplot(gs[1])
+        render_split_panel(ax_a, inputs)
+        render_signal_panel(ax_b, inputs)
+    elif show_a:
+        fig = plt.figure(figsize=(11.0, 5.2), dpi=100)
+        fig.suptitle(
+            "Experiment config — train / eval pools",
+            fontsize=14,
+            fontweight="bold",
+            y=0.98,
+        )
+        ax_a = fig.add_subplot(111)
+        render_split_panel(ax_a, inputs)
+    else:
+        fig = plt.figure(figsize=(11.0, 6.0), dpi=100)
+        fig.suptitle(
+            "Results pipeline — signals and metrics",
+            fontsize=14,
+            fontweight="bold",
+            y=0.98,
+        )
+        ax_b = fig.add_subplot(111)
+        render_signal_panel(ax_b, inputs)
     return fig
 
 

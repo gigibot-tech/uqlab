@@ -6,10 +6,10 @@ Core library for uncertainty quantification experiments: train models, run fast-
 
 | Term | Where |
 |------|--------|
-| **Runner** | [`runner/pipeline.py`](runner/pipeline.py) — one experiment job |
+| **Runner** | [`runner/execute.py`](runner/execute.py) — one experiment job |
 | **Pipeline** | Runner stages (load → validate → execute) or [`evaluation/pipeline/`](evaluation/pipeline/) for campaigns |
 | **Vendor port** | [`vendor/disentanglement_error/disentangling_model.py`](vendor/disentanglement_error/disentangling_model.py) — `fit` / `predict_disentangling` API |
-| **FastPilotDisentanglingModel** | Adapter that runs `pipeline.run` and reads `results.pt` (not an in-process CNN) |
+| **FastPilotDisentanglingModel** | Adapter that runs `run_from_yaml` and reads `results.pt` (not an in-process CNN) |
 
 **Flow →** [`docs/UQLAB_FLOW.md`](../../docs/UQLAB_FLOW.md)
 
@@ -19,7 +19,7 @@ Core library for uncertainty quantification experiments: train models, run fast-
 uqlab/
 ├── models/           # Trainable PyTorch architectures + MC Dropout forwards
 ├── evaluation/       # Signals, metrics, pipeline, paper benchmarks
-├── runner/           # Single-run engine (pipeline.run)
+├── runner/           # Single-run engine (run_from_yaml)
 ├── data/             # CIFAR-10N loaders, fast-pilot sampling
 ├── shared/           # Config schemas, utils, types
 ├── vendor/           # Vendored disentanglement_error metric
@@ -31,7 +31,7 @@ flowchart LR
   models["models/"] --> signals["evaluation/signals/"]
   signals --> pipeline["evaluation/pipeline"]
   benchmarks["evaluation/benchmarks/"] --> pipeline
-  runner["runner/pipeline"] --> models
+  runner["runner/execute"] --> models
   vendor["vendor/"] --> benchmarks
 ```
 
@@ -41,7 +41,7 @@ flowchart LR
 from pathlib import Path
 from uqlab.runner import pipeline
 
-pipeline.run(
+run_from_yaml(
     config_path=Path("config.yaml"),
     run_dir=Path("results/run_0001"),
     seed=42,
@@ -73,7 +73,7 @@ model = FastPilotDisentanglingModel.from_workflow_defaults()
 score = calculate_disentanglement_error(X, y, model, return_json=False)
 ```
 
-CLI: `scripts/runners/run_disentanglement_benchmark.py`
+CLI: `scripts/analysis/disentanglement_error.py` (post-hoc; train via `scripts/runners/run_fast_uncertainty_classification.py`)
 
 Full architecture and plot semantics → [`docs/features/disentanglement-benchmark.md`](../../docs/features/disentanglement-benchmark.md)
 
@@ -85,7 +85,7 @@ Full architecture and plot semantics → [`docs/features/disentanglement-benchma
 | [`evaluation/signals/`](evaluation/signals/) | Primitives → registry → fast-pilot AUROC |
 | [`evaluation/benchmarks/`](evaluation/benchmarks/) | `FastPilotDisentanglingModel` paper bridge |
 | [`evaluation/pipeline/`](evaluation/pipeline/) | Campaign scoring, sweep plots, thesis diagrams |
-| [`runner/pipeline.py`](runner/pipeline.py) | Training + eval orchestration for one experiment |
+| [`runner/execute.py`](runner/execute.py) | Training + eval orchestration for one experiment |
 | [`vendor/disentanglement_error/`](vendor/disentanglement_error/) | Upstream metric loops (vendored) |
 
 ## Configuration

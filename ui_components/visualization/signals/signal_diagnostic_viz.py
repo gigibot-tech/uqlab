@@ -206,7 +206,7 @@ def enrich_per_sample_with_predictions(
     train_fraction: float = 0.5,
 ) -> pd.DataFrame:
     """Add ``predicted_group``, ``correct``, ``is_test_split`` using a single-signal 3-way clf."""
-    from uqlab.evaluation.metrics import predict_eval_groups_single_signal
+    from uqlab.evaluation.metrics.scoring import predict_eval_groups_single_signal
 
     if signal not in df.columns or "group" not in df.columns:
         return df.copy()

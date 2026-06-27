@@ -14,8 +14,8 @@ from typing import Any, Callable
 import streamlit as st
 
 from uqlab.ui_components.grouping.campaign_format import format_sweep_campaign_header
-from uqlab.evaluation.pipeline.sweep_plot_pools import eval_pool_debug_rows
-from uqlab.evaluation.pipeline.sweep_line_plot import (
+from uqlab.evaluation.reporting.sweep_plot_pools import eval_pool_debug_rows
+from uqlab.evaluation.reporting.sweep_line_plot import (
     FACET_PARAM_LABELS,
     SWEEP_KIND_DATASET_SIZE,
     SWEEP_KIND_LABEL_NOISE,
@@ -38,7 +38,7 @@ from uqlab.ui_components.visualization.sweeps.sweep_line_plot_viz import (
 )
 from uqlab.ui_components.visualization.thesis.thesis_diagram_viz import render_thesis_diagram_panel
 from uqlab.ui_components.visualization.campaign.campaign_report_viz import render_campaign_report_download
-from uqlab.evaluation.pipeline.campaign_report import CampaignExportBundle
+from uqlab.evaluation.reporting.campaign_report import CampaignExportBundle
 
 
 def _completed_experiments(experiments: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -110,8 +110,10 @@ def render_sweep_analysis_hub(
         return
 
     st.caption(
-        "**Paper plot (default):** Percentage (0–1) vs accuracy + global aleatoric/epistemic means. "
-        "**Pool diagnostic (expander):** raw sweep param · pool-filtered signal · facet slice."
+        "**Paper sweeps (Fig 3/4):** pool means + accuracy vs swept parameter (under-train or label noise). "
+        "**Four-region runs:** use the validation expander below (per-region AUROC/means, no swept axis). "
+        "**Pool diagnostic:** raw param · signal · facet slice. "
+        "AUROC measures separability; Y-axis pool means are averages over eval pools — different metrics."
     )
 
     labels = [
@@ -172,25 +174,36 @@ def render_sweep_analysis_hub(
         SWEEP_KIND_LABEL_NOISE: "Label noise (%) — Fig 4 / aleatoric axis",
         SWEEP_KIND_DATASET_SIZE: "Under-train per class — Fig 3 / epistemic axis",
     }
-    x_pick = st.selectbox(
-        "X axis (swept parameter)",
-        ["auto", SWEEP_KIND_LABEL_NOISE, SWEEP_KIND_DATASET_SIZE],
-        format_func=lambda k: x_axis_labels[k],
-        key=f"{key_prefix}_x_axis",
-    )
-    sweep_kind = auto_kind if x_pick == "auto" else x_pick
+    with st.expander("Debug: eval pools & X axis", expanded=False):
+        x_pick = st.selectbox(
+            "X axis (swept parameter)",
+            ["auto", SWEEP_KIND_LABEL_NOISE, SWEEP_KIND_DATASET_SIZE],
+            format_func=lambda k: x_axis_labels[k],
+            key=f"{key_prefix}_x_axis",
+        )
+        sweep_kind = auto_kind if x_pick == "auto" else x_pick
+        if group_hint and x_pick == "auto" and group_hint != auto_kind:
+            st.caption(
+                f"Campaign metadata suggests **{group_hint.replace('_', ' ')}**; "
+                f"metrics frame inferred **{auto_kind.replace('_', ' ')}**."
+            )
+        debug_rows = eval_pool_debug_rows(run_ids, exp_dir)
+        if debug_rows:
+            st.caption(
+                "Group counts from `results.pt` · `epistemic_expected` / `aleatoric_expected` "
+                "from config (same rules as split construction). At 100% noise, "
+                "`n_epistemic_like` should be 0."
+            )
+            st.dataframe(debug_rows, use_container_width=True, hide_index=True)
+        else:
+            st.caption("No on-disk results to inspect.")
+
     try:
         x_col = resolve_x_col(df, sweep_kind)
         facets = detect_facet_columns(df, x_col)
     except ValueError as exc:
         st.warning(str(exc))
         return
-
-    if group_hint and x_pick == "auto" and group_hint != auto_kind:
-        st.caption(
-            f"Campaign metadata suggests **{group_hint.replace('_', ' ')}**; "
-            f"metrics frame inferred **{auto_kind.replace('_', ' ')}**."
-        )
 
     facet_filters: dict[str, Any] = {}
     if facets:
@@ -215,24 +228,17 @@ def render_sweep_analysis_hub(
                 "pick one value above — otherwise the lines mix incompatible training setups."
             )
 
-    with st.expander("Debug: eval pool counts vs config", expanded=False):
-        debug_rows = eval_pool_debug_rows(run_ids, exp_dir)
-        if debug_rows:
-            st.caption(
-                "Group counts from `results.pt` · `epistemic_expected` / `aleatoric_expected` "
-                "from config (same rules as split construction). At 100% noise, "
-                "`n_epistemic_like` should be 0."
-            )
-            st.dataframe(debug_rows, use_container_width=True, hide_index=True)
-        else:
-            st.caption("No on-disk results to inspect.")
-
-    with st.expander("Methods schematic", expanded=False):
+    with st.expander("Results pipeline (how signals are computed)", expanded=False):
+        st.caption(
+            "Panel B: primitives → enabled signals (formula table) → **pool mean** "
+            "(mean over eval pool) and **AUROC** (rank-based separability)."
+        )
         render_thesis_diagram_panel(
             experiments=plot_experiments,
             project_root=repository_root(),
             key_prefix=f"{key_prefix}_thesis",
             default_symbolic=True,
+            panels=("b",),
         )
 
     plot_key = f"{key_prefix}_{group.get('sweep_group_id', pick_idx)}"
@@ -309,3 +315,14 @@ def render_sweep_analysis_hub(
             key_prefix=f"{key_prefix}_plot_fail",
             insufficient_runs=len(run_ids) < 2,
         )
+
+    if ui_on("results_four_region"):
+        with st.expander("Four-region signal validation", expanded=False):
+            from uqlab.ui_components.visualization.validation.signal_validation_tab import (
+                render_four_region_validation_panel,
+            )
+
+            render_four_region_validation_panel(
+                key_prefix=f"{key_prefix}_fr",
+                project_root=repository_root(),
+            )

@@ -14,7 +14,7 @@ from typing import Any, Literal
 
 import yaml
 
-from uqlab.evaluation.pipeline.config_diff import (
+from uqlab.evaluation.reporting.config_diff import (
     arsenal_shared_display,
     arsenal_tracked_flat,
     chip_display_label,

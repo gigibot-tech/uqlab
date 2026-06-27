@@ -4,10 +4,12 @@ Third-party code **copied into the repo** under `src/uqlab/vendor/` (not pip dep
 
 ## What is a vendor port?
 
-The vendored library defines an abstract API (e.g. [`DisentanglingModel`](disentanglement_error/disentangling_model.py): `fit` + `predict_disentangling`). UQLab implements that API in **evaluation**, not here:
+The vendored library defines an abstract API (e.g. [`DisentanglingModel`](disentanglement_error/disentangling_model.py): `fit` + `predict_disentangling`). UQLab implements the **read path** in evaluation:
 
-- **Adapter:** [`evaluation/benchmarks/disentangling/fast_pilot.py`](../evaluation/benchmarks/disentangling/fast_pilot.py)
+- **Adapter:** [`evaluation/benchmarks/disentangling/experiment.py`](../evaluation/benchmarks/disentangling/experiment.py) (`ExperimentDisentanglingModel` reads `results.pt`)
 - **Uncertainty data:** [`evaluation/artifacts.py`](../evaluation/artifacts.py) (`signal_table` in `results.pt`)
+
+Training runs via `pipeline.run` + `ExperimentConfig`. Disentanglement scoring is post-hoc analysis.
 
 Flow: [`docs/UQLAB_FLOW.md`](../../docs/UQLAB_FLOW.md)
 
@@ -30,25 +32,18 @@ from uqlab.vendor.disentanglement_error import (
 )
 ```
 
-### CLI example
+### Post-hoc analysis (recommended)
 
-```python
-from uqlab.evaluation.benchmarks.disentangling import (
-    FastPilotDisentanglingModel,
-    calculate_disentanglement_error,
-    collect_cifar10_arrays,
-)
-
-X, y = collect_cifar10_arrays()
-score, _, _ = calculate_disentanglement_error(
-    X, y, FastPilotDisentanglingModel.from_workflow_defaults(), kw_config={"n_runs": 1}
-)
+```bash
+# After a run completes:
+PYTHONPATH=src python scripts/analysis/disentanglement_error.py score \
+  --results-dir data/experiments/<id>/results --mode paper
 ```
 
-See [`scripts/runners/run_disentanglement_benchmark.py`](../../scripts/runners/run_disentanglement_benchmark.py).
+See [`scripts/analysis/disentanglement_error.py`](../../scripts/analysis/disentanglement_error.py).
 
 ## See also
 
-- [`docs/UQLAB_FLOW.md`](../../docs/UQLAB_FLOW.md) — why `fit` vs `predict_disentangling`
-- [`docs/features/disentanglement-benchmark.md`](../../docs/features/disentanglement-benchmark.md) — Streamlit launch, tests
+- [`docs/UQLAB_FLOW.md`](../../docs/UQLAB_FLOW.md) — execution flow
+- [`docs/features/disentanglement-benchmark.md`](../../docs/features/disentanglement-benchmark.md) — launch, analysis, tests
 - [`docs/features/registries.md`](../../docs/features/registries.md) — METRICS / `signal_table` columns
