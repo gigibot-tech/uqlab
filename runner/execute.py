@@ -6,8 +6,9 @@ MLgym mapping
 - **Factory**: ``build_model`` inside ``run_experiment_core``
 - **Job**: this module — load → validate → execute
 
-All callers (CLI, Flask executor, FastAPI DirectExecutor) must use :func:`run` or
-:func:`run_config`; do not invoke ``run_fast_uncertainty_classification.main()`` directly.
+All callers (CLI, Flask executor, FastAPI DirectExecutor) must use
+:func:`run_from_yaml` or :func:`run_from_python_config`; do not invoke
+``run_fast_uncertainty_classification.main()`` directly.
 """
 
 from __future__ import annotations
@@ -109,7 +110,7 @@ def _execute_pipeline(
         return pipe.run(ctx)
 
 
-def run(
+def run_from_yaml(
     config_path: Path,
     output_dir: Path,
     *,
@@ -137,7 +138,7 @@ def run(
     return ctx.get("summary") or {}
 
 
-def run_config(
+def run_from_python_config(
     config: ExperimentConfig,
     output_dir: Path,
     *,
@@ -147,7 +148,7 @@ def run_config(
     progress_callback: Optional[Callable[..., Any]] = None,
     pipeline: Optional[ExperimentPipeline] = None,
 ) -> dict[str, Any]:
-    """Execute from an in-memory ``ExperimentConfig`` (facade / tests)."""
+    """Execute from an in-memory ``ExperimentConfig`` (facade / tests / notebooks)."""
     ctx = RunContext(
         data={
             "config": config,
@@ -172,3 +173,7 @@ def validate_model_scope_after_build(model, *, architecture: str, training_scope
     )
     validate_training_scope(model, resolved)
     return resolved
+
+
+run = run_from_yaml  # deprecated alias
+run_config = run_from_python_config  # deprecated alias
