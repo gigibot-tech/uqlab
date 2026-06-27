@@ -13,6 +13,59 @@ from pydantic import BaseModel, field_validator, model_validator
 from uqlab.shared.config.signals import DEFAULT_SIGNALS, normalize_evaluation_signals
 
 
+def _deep_merge_yaml_dict(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+    """Deep-merge override into base (override wins on conflicts)."""
+    merged = dict(base)
+    for key, value in override.items():
+        if key == "defaults":
+            continue
+        if key in merged and isinstance(merged[key], dict) and isinstance(value, dict):
+            merged[key] = _deep_merge_yaml_dict(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
+
+
+def load_yaml_merging_defaults(path: Path) -> dict[str, Any]:
+    """
+    Load experiment YAML, resolving Hydra-style ``defaults: [default, ...]``.
+
+    Only simple name refs in the same directory as ``path`` are supported
+    (matches ``configs/experiment/fast_pilot.yaml`` → ``default.yaml``).
+    """
+    with open(path) as f:
+        config_dict = yaml.safe_load(f) or {}
+
+    defaults = config_dict.pop("defaults", None)
+    if not defaults:
+        return config_dict
+
+    merged: dict[str, Any] = {}
+    for item in defaults:
+        ref_name = None
+        if isinstance(item, str):
+            ref_name = item
+        elif isinstance(item, dict):
+            # e.g. {override /data: cifar10n} — take first key's basename
+            ref_name = next(iter(item.keys()), None)
+            if ref_name and "/" in ref_name:
+                ref_name = ref_name.rsplit("/", 1)[-1]
+        if not ref_name:
+            continue
+        ref_path = path.parent / f"{ref_name}.yaml"
+        if ref_path.is_file():
+            merged = _deep_merge_yaml_dict(merged, load_yaml_merging_defaults(ref_path))
+
+    return _deep_merge_yaml_dict(merged, config_dict)
+
+
+def normalize_dinov2_model(model_name: str) -> str:
+    """Legacy torch.hub names → short keys used by ``DINOv2Backbone``."""
+    from uqlab.models.architecture import normalize_dinov2_model as _normalize
+
+    return _normalize(model_name)
+
+
 def parse_under_supported_classes(
     value: Union[str, Sequence[int], None],
     *,
@@ -204,7 +257,7 @@ class ModelConfig(BaseModel):
     training_mode: Literal["feature_space", "end_to_end"] = "feature_space"
     
     # DINOv2-specific (only used when architecture="dinov2_mlp")
-    dinov2_model: str = "dinov2_vitb14"
+    dinov2_model: str = "small"
     
     # Common parameters
     hidden_dim: int = 256
@@ -225,6 +278,11 @@ class ModelConfig(BaseModel):
         mode = scope_to_training_mode(canonical, self.training_scope)
         object.__setattr__(self, "training_mode", mode)
         return self
+
+    @field_validator("dinov2_model")
+    @classmethod
+    def normalize_dinov2_model_field(cls, v: str) -> str:
+        return normalize_dinov2_model(v)
 
     @field_validator("training_mode")
     @classmethod
@@ -318,8 +376,7 @@ class ExperimentConfig:
     @classmethod
     def from_yaml(cls, path: Path) -> ExperimentConfig:
         """Load configuration from YAML file."""
-        with open(path) as f:
-            config_dict = yaml.safe_load(f)
+        config_dict = load_yaml_merging_defaults(path)
 
         seed = int(config_dict.get("seed", 42))
 
@@ -409,7 +466,7 @@ class ExperimentConfig:
             architecture=model_dict.get("architecture", "dinov2_mlp"),
             training_scope=scope,
             training_mode=model_dict.get("training_mode", "feature_space"),
-            dinov2_model=model_dict.get("dinov2_model", "dinov2_vitb14"),
+            dinov2_model=normalize_dinov2_model(model_dict.get("dinov2_model", "small")),
             hidden_dim=model_dict.get("hidden_dim", 256),
             dropout=model_dict.get("dropout", 0.2),
             use_untrained_resnet=model_dict.get("use_untrained_resnet", False),

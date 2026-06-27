@@ -52,7 +52,10 @@ from typing import Dict, List
 
 import torch
 
-from uqlab.evaluation.legacy.triage.dualxda_axioms import DualXDATracer
+from uqlab.evaluation.signals.dualxda_tracer import DualXDATracer
+from uqlab.evaluation.signals.attribution_distribution import (
+    compute_attribution_distribution_signals,
+)
 
 
 def topk_influence_metrics(
@@ -278,7 +281,7 @@ def compute_attribution_structure_signals(
     Returns:
         Dictionary of signal tensors, each of shape [N]
     """
-    from uqlab.evaluation.legacy.triage.dualxda_axioms import infer_classifier_layer_name
+    from uqlab.evaluation.signals.dualxda_tracer import infer_classifier_layer_name
     
     layer_name = infer_classifier_layer_name(model)
     print(f"Using DualXDA classifier layer: {layer_name}")
@@ -290,11 +293,16 @@ def compute_attribution_structure_signals(
         "mass": [],
         "coherence": [],
         "dominance": [],
+        "entropy": [],
+        "participation": [],
+        "signed_split": [],
+        "variance": [],
         "label_disagreement": [],
         "noisy_support_ratio": [],
         "attribution_concentration": [],
         "cross_class_support": [],
     }
+    influence_chunks: list[torch.Tensor] = []
 
     for start in range(0, int(eval_inputs.shape[0]), batch_size):
         end = min(start + batch_size, int(eval_inputs.shape[0]))
@@ -303,6 +311,13 @@ def compute_attribution_structure_signals(
         
         # Get DualXDA attributions
         attr = tracer.traces(x=xb, targets=targets, drop_zero_columns=False)
+        influence_chunks.append(attr.detach().cpu())
+        dist = compute_attribution_distribution_signals(attr.detach())
+        out["entropy"].append(dist["entropy"].cpu())
+        out["participation"].append(dist["participation"].cpu())
+        out["signed_split"].append(dist["signed_split"].cpu())
+        out["variance"].append(dist["variance"].cpu())
+
         batch_mass: List[float] = []
         batch_coherence: List[float] = []
         batch_dominance: List[float] = []
@@ -367,6 +382,8 @@ def compute_attribution_structure_signals(
 
     combined = {k: torch.cat(v, dim=0) for k, v in out.items()}
     combined["inverse_coherence"] = inverse_coherence_from_coherence(combined["coherence"])
+    if influence_chunks:
+        combined["influence_matrix"] = torch.cat(influence_chunks, dim=0)
     return combined
 
 # Made with Bob

@@ -200,6 +200,30 @@ def sample_indices_for_experiment(
     )
 
 
+def _label_tensors_for_indices(
+    dataset,
+    indices: Sequence[int],
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Read noisy/clean/is_noisy from dataset metadata (works for 2- or 4-tuple loaders)."""
+    idx = np.asarray(indices, dtype=np.int64)
+    clean = dataset_clean_labels(dataset)[idx]
+    noisy_src = getattr(dataset, "noisy_labels", None)
+    if noisy_src is not None:
+        noisy = np.asarray(noisy_src, dtype=np.int64)[idx]
+    else:
+        noisy = clean.copy()
+    mask_src = getattr(dataset, "noise_mask", None)
+    if mask_src is not None:
+        is_noisy = np.asarray(mask_src, dtype=bool)[idx]
+    else:
+        is_noisy = noisy != clean
+    return (
+        torch.as_tensor(noisy, dtype=torch.long),
+        torch.as_tensor(clean, dtype=torch.long),
+        torch.as_tensor(is_noisy, dtype=torch.bool),
+    )
+
+
 @torch.no_grad()
 def extract_features_for_indices(
     dataset: CIFAR10NDataset,
@@ -229,6 +253,11 @@ def extract_features_for_indices(
             - is_noisy: Boolean mask [N]
             - original_indices: Original dataset indices [N]
     """
+    from uqlab.models.architecture import normalize_dinov2_model
+
+    if not use_untrained_resnet:
+        dinov2_model = normalize_dinov2_model(dinov2_model)
+
     subset = Subset(dataset, list(indices))
     loader = DataLoader(subset, batch_size=batch_size, shuffle=False, num_workers=0)
 
@@ -269,33 +298,23 @@ def extract_features_for_indices(
             return model.extract_features(images)  # Returns [B, feature_dim] with CLS token
 
     all_features: List[torch.Tensor] = []
-    all_noisy_labels: List[torch.Tensor] = []
-    all_clean_labels: List[torch.Tensor] = []
-    all_is_noisy: List[torch.Tensor] = []
 
     for batch in loader:
-        # Handle both CIFAR10 (2 values) and CIFAR10NDataset (4 values)
         if len(batch) == 2:
-            # Raw CIFAR10: (images, labels)
-            images, labels = batch
-            noisy_labels = labels  # No noise, so noisy = clean
-            clean_labels = labels
-            is_noisy = torch.zeros(len(labels), dtype=torch.bool)
+            images, _labels = batch
         else:
-            # CIFAR10NDataset: (images, noisy_labels, clean_labels, is_noisy)
-            images, noisy_labels, clean_labels, is_noisy = batch
-        
+            images, _noisy, _clean, _is_noisy = batch
+
         features = extract_batch_features(images.to(device))
         all_features.append(features.cpu())
-        all_noisy_labels.append(noisy_labels.cpu())
-        all_clean_labels.append(clean_labels.cpu())
-        all_is_noisy.append(is_noisy.cpu())
+
+    noisy_labels, clean_labels, is_noisy = _label_tensors_for_indices(dataset, indices)
 
     return {
         "features": torch.cat(all_features, dim=0),
-        "noisy_labels": torch.cat(all_noisy_labels, dim=0),
-        "clean_labels": torch.cat(all_clean_labels, dim=0),
-        "is_noisy": torch.cat(all_is_noisy, dim=0).bool(),
+        "noisy_labels": noisy_labels,
+        "clean_labels": clean_labels,
+        "is_noisy": is_noisy,
         "original_indices": torch.as_tensor(indices, dtype=torch.long),
     }
 
@@ -350,6 +369,7 @@ def build_feature_cache_path(
     noise_type: str,
     dinov2_model: str,
     use_untrained_resnet: bool = False,
+    label_noise_rate: float = 0.0,
 ) -> Path:
     """
     Build a stable feature-cache path from the selected data indices.
@@ -363,9 +383,54 @@ def build_feature_cache_path(
     if use_untrained_resnet:
         model_name = "resnet50_untrained"
     else:
-        model_name = dinov2_model
+        from uqlab.models.architecture import normalize_dinov2_model
+
+        model_name = normalize_dinov2_model(dinov2_model)
+
+    noise_tag = noise_type
+    if label_noise_rate > 0:
+        noise_tag = f"{noise_type}_syn{int(round(label_noise_rate * 100))}pct"
     
-    return cache_dir / f"features_{noise_type}_{model_name}_n{len(indices)}_{index_hash}.pt"
+    return cache_dir / f"features_{noise_tag}_{model_name}_n{len(indices)}_{index_hash}.pt"
+
+
+def build_and_train_feature_model(
+    train_dataset,
+    *,
+    device: torch.device,
+    num_classes: int,
+    hidden_dim: int,
+    dropout: float,
+    epochs: int,
+    batch_size: int,
+    learning_rate: float,
+    weight_decay: float,
+):
+    """
+    Build an ``EmbeddingDropoutMLP`` and train it on pre-extracted embeddings.
+
+    Prefer this name over :func:`train_feature_model` (deprecated alias).
+    """
+    from .models import EmbeddingDropoutMLP
+    import torch.nn as nn
+    from torch.utils.data import DataLoader
+
+    from uqlab.models.training import train_feature_model as _train_loop
+
+    model = EmbeddingDropoutMLP(
+        input_dim=int(train_dataset.features.shape[1]),
+        num_classes=num_classes,
+        hidden_dim=hidden_dim,
+        dropout=dropout,
+    ).to(device)
+
+    class _TrainingConfig:
+        train_batch_size = batch_size
+        learning_rate = learning_rate
+        weight_decay = weight_decay
+        epochs = epochs
+
+    return _train_loop(model, train_dataset, _TrainingConfig(), device)
 
 
 def train_feature_model(
@@ -380,54 +445,18 @@ def train_feature_model(
     learning_rate: float,
     weight_decay: float,
 ):
-    """
-    Train an embedding-space classifier with dropout.
-    
-    Args:
-        train_dataset: EmbeddingDataset with pre-extracted DINOv2 embeddings
-        device: Device to train on
-        num_classes: Number of output classes
-        hidden_dim: Hidden layer dimension
-        dropout: Dropout probability
-        epochs: Number of training epochs
-        batch_size: Training batch size
-        learning_rate: Learning rate
-        weight_decay: Weight decay for regularization
-        
-    Returns:
-        Trained EmbeddingDropoutMLP model
-    """
-    from .models import EmbeddingDropoutMLP
-    import torch.nn as nn
-    from torch.utils.data import DataLoader
-    
-    model = EmbeddingDropoutMLP(
-        input_dim=int(train_dataset.features.shape[1]),
+    """Deprecated — use :func:`build_and_train_feature_model`."""
+    return build_and_train_feature_model(
+        train_dataset,
+        device=device,
         num_classes=num_classes,
         hidden_dim=hidden_dim,
         dropout=dropout,
-    ).to(device)
-
-    loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=0)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
-    criterion = nn.CrossEntropyLoss()
-
-    model.train()
-    for epoch in range(epochs):
-        total_loss = 0.0
-        for xb, yb in loader:
-            xb = xb.to(device)
-            yb = yb.to(device)
-            optimizer.zero_grad()
-            logits = model(xb)
-            loss = criterion(logits, yb)
-            loss.backward()
-            optimizer.step()
-            total_loss += float(loss.item())
-        if (epoch + 1) % max(1, epochs // 3) == 0 or epoch == epochs - 1:
-            print(f"  Epoch {epoch + 1}/{epochs}, loss={total_loss / max(1, len(loader)):.4f}")
-
-    return model
+        epochs=epochs,
+        batch_size=batch_size,
+        learning_rate=learning_rate,
+        weight_decay=weight_decay,
+    )
 
 
 class EmbeddingOrganizer:
@@ -497,7 +526,9 @@ class EmbeddingOrganizer:
         self.split_spec = split_spec
         self.feature_cache_dir = feature_cache_dir
         self.noise_type = noise_type
-        self.dinov2_model = dinov2_model
+        from uqlab.models.architecture import normalize_dinov2_model
+
+        self.dinov2_model = normalize_dinov2_model(dinov2_model)
         self.batch_size = batch_size
         self.device = device
         
@@ -525,12 +556,14 @@ class EmbeddingOrganizer:
         ])
         
         # Step 2: Build cache path
+        label_noise_rate = float(getattr(self.dataset, "noise_rate", 0.0) or 0.0)
         cache_file = build_feature_cache_path(
             self.feature_cache_dir,
             union_indices.tolist(),
             noise_type=self.noise_type,
             dinov2_model=self.dinov2_model,
             use_untrained_resnet=False,  # EmbeddingOrganizer doesn't support ResNet yet
+            label_noise_rate=label_noise_rate,
         )
         
         # Step 3: Load or compute features

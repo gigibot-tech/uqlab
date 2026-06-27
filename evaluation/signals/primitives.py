@@ -42,6 +42,10 @@ MC_MUTUAL_INFO = "mc.mutual_info"
 DUALXDA_COHERENCE = "dualxda.coherence"
 DUALXDA_MASS = "dualxda.mass"
 DUALXDA_DOMINANCE = "dualxda.dominance"
+DUALXDA_ENTROPY = "dualxda.entropy"
+DUALXDA_PARTICIPATION = "dualxda.participation"
+DUALXDA_SIGNED_SPLIT = "dualxda.signed_split"
+DUALXDA_VARIANCE = "dualxda.variance"
 
 # EK-FAC / Kronfluence attribution backend
 EK_FAK_COHERENCE = "ek_fak.coherence"
@@ -52,6 +56,11 @@ EK_FAK_DOMINANCE = "ek_fak.dominance"
 GRADDOT_COHERENCE = "graddot.coherence"
 GRADDOT_MASS = "graddot.mass"
 GRADDOT_DOMINANCE = "graddot.dominance"
+
+# Full [n_eval, n_train] influence matrices (persisted under zwischen/)
+INFLUENCE_DUALXDA = "influence.dualxda"
+INFLUENCE_EK_FAK = "influence.ek_fak"
+INFLUENCE_GRADDOT = "influence.graddot"
 
 # Legacy attribution keys (write-through alias for DualXDA during migration)
 ATTR_COHERENCE = "attribution.coherence"
@@ -78,3 +87,20 @@ def namespaced_attribution_store(
         out[ATTR_MASS] = mass
         out[ATTR_DOMINANCE] = dominance
     return out
+
+
+def attribution_distribution_store(
+    backend: str,
+    *,
+    entropy: torch.Tensor,
+    participation: torch.Tensor,
+    signed_split: torch.Tensor,
+    variance: torch.Tensor,
+) -> PrimitiveStore:
+    """Write full-vector attribution distribution primitives for one backend."""
+    return {
+        f"{backend}.entropy": entropy,
+        f"{backend}.participation": participation,
+        f"{backend}.signed_split": signed_split,
+        f"{backend}.variance": variance,
+    }

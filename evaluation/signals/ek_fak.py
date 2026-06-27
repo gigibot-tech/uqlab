@@ -10,13 +10,14 @@ Kronfluence toy notebook). Requires optional ``kronfluence`` package.
 
 from __future__ import annotations
 
+import copy
 import importlib.util
 from pathlib import Path
 from typing import Dict, TYPE_CHECKING
 
 import torch
 import torch.nn.functional as F
-from torch.utils.data import DataLoader, TensorDataset
+from torch.utils.data import TensorDataset
 
 from uqlab.evaluation.signals.attribution import topk_influence_metrics
 
@@ -99,86 +100,111 @@ def _save_cached_scores(cache_dir: Path, scores: torch.Tensor) -> None:
     torch.save({"scores": scores.cpu()}, _scores_cache_path(cache_dir))
 
 
+def _extract_score_matrix(loaded: dict | torch.Tensor | None) -> torch.Tensor:
+    if loaded is None:
+        raise RuntimeError("EK-FAC: Kronfluence returned no pairwise scores")
+    if isinstance(loaded, torch.Tensor):
+        return loaded.float()
+    if isinstance(loaded, dict):
+        from kronfluence.utils.constants import ALL_MODULE_NAME
+
+        scores = loaded.get(ALL_MODULE_NAME)
+        if scores is None:
+            scores = loaded.get("all_modules")
+        if scores is None and loaded:
+            scores = next(iter(loaded.values()))
+        if isinstance(scores, torch.Tensor):
+            return scores.float()
+    raise TypeError(f"EK-FAC: unexpected score payload type: {type(loaded)!r}")
+
+
+def _ek_fak_device(device: torch.device) -> torch.device:
+    """Kronfluence is CPU/CUDA-only; MPS inputs vs CPU weights cause device errors."""
+    if device.type == "mps":
+        return torch.device("cpu")
+    return device
+
+
 def _compute_pairwise_scores(
     *,
     model: nn.Module,
     train_dataset,
     eval_inputs: torch.Tensor,
+    mean_predictions: torch.Tensor,
     device: torch.device,
     batch_size: int,
     train_batch_size: int,
     cache_dir: Path,
 ) -> torch.Tensor:
     Analyzer, prepare_model, Task = _require_kronfluence()
+    ek_device = _ek_fak_device(device)
+    if ek_device != device:
+        print(f"EK-FAC: running on {ek_device} (Kronfluence does not support {device.type})")
 
     train_x, train_y = _train_tensors(train_dataset)
-    train_loader = DataLoader(
-        TensorDataset(train_x, train_y.long()),
-        batch_size=train_batch_size,
-        shuffle=False,
-    )
-    query_loader = DataLoader(
-        TensorDataset(eval_inputs.cpu(), torch.zeros(len(eval_inputs), dtype=torch.long)),
-        batch_size=batch_size,
-        shuffle=False,
-    )
+    train_ds = TensorDataset(train_x, train_y.long())
+    eval_targets = mean_predictions.argmax(dim=1).long()
+    query_ds = TensorDataset(eval_inputs.cpu(), eval_targets.cpu())
 
     class _ExperimentTask(Task):
+        @staticmethod
+        def _prepare_inputs(inputs: torch.Tensor) -> torch.Tensor:
+            # Kronfluence 1.x hooks need a graph; frozen params require input grad.
+            if not inputs.requires_grad:
+                inputs = inputs.detach().requires_grad_(True)
+            return inputs
+
         def compute_train_loss(self, batch, model, sample=False):
             inputs, labels = batch
-            inputs = inputs.to(device)
-            labels = labels.to(device)
+            inputs = self._prepare_inputs(inputs.to(ek_device))
+            labels = labels.to(ek_device)
             return F.cross_entropy(model(inputs), labels)
 
         def compute_measurement(self, batch, model):
             inputs, labels = batch
-            inputs = inputs.to(device)
-            labels = labels.to(device)
-            preds = model(inputs).argmax(dim=-1)
-            return (preds == labels).float()
+            inputs = self._prepare_inputs(inputs.to(ek_device))
+            labels = labels.to(ek_device)
+            logits = model(inputs)
+            return F.cross_entropy(logits, labels)
 
-    model = model.to(device)
-    model.eval()
-    prepared = prepare_model(model)
+    task = _ExperimentTask()
+    work_model = copy.deepcopy(model)
+    work_model.to(ek_device).eval()
+    prepared = prepare_model(work_model, task)
     analyzer = Analyzer(
         analysis_name="uqlab_ek_fak",
         model=prepared,
-        task=_ExperimentTask(),
+        task=task,
+        disable_tqdm=False,
+        output_dir=str(cache_dir),
     )
-    analyzer.set_kwargs("disable_tqdm", True)
 
-    factors_dir = cache_dir / "factors"
-    scores_dir = cache_dir / "scores"
-    factors_dir.mkdir(parents=True, exist_ok=True)
-    scores_dir.mkdir(parents=True, exist_ok=True)
+    per_query_bs = max(1, min(int(batch_size), len(query_ds)))
+    per_train_bs = max(1, min(int(train_batch_size), len(train_ds)))
 
+    print(f"EK-FAC: fitting factors ({len(train_ds):,} train samples, batch {per_train_bs})...")
     analyzer.fit_all_factors(
         factors_name="ekfac",
-        dataset=train_loader,
-        per_device_batch_size=None,
-        factor_args=None,
+        dataset=train_ds,
+        per_device_batch_size=per_train_bs,
         overwrite_output_dir=True,
     )
-    analyzer.compute_pairwise_scores(
+    print(f"EK-FAC: computing pairwise scores ({len(query_ds):,} eval × {len(train_ds):,} train)...")
+    loaded = analyzer.compute_pairwise_scores(
         scores_name=SCORES_NAME,
         factors_name="ekfac",
-        query_dataset=query_loader,
-        train_dataset=train_loader,
-        per_device_query_batch_size=None,
-        per_device_train_batch_size=None,
+        query_dataset=query_ds,
+        train_dataset=train_ds,
+        per_device_query_batch_size=per_query_bs,
+        per_device_train_batch_size=per_train_bs,
         overwrite_output_dir=True,
     )
-    loaded = analyzer.load_pairwise_scores(SCORES_NAME)
-    if isinstance(loaded, dict):
-        scores = loaded.get("all_modules")
-        if scores is None:
-            scores = next(iter(loaded.values()))
-    else:
-        scores = loaded
-    return scores.detach().cpu().float()
+    if loaded is None:
+        loaded = analyzer.load_pairwise_scores(SCORES_NAME)
+    print("EK-FAC: done.")
+    return _extract_score_matrix(loaded).detach().cpu()
 
 
-@torch.no_grad()
 def compute_ek_fak_structure_signals(
     model: nn.Module,
     train_dataset,
@@ -192,7 +218,6 @@ def compute_ek_fak_structure_signals(
     train_batch_size: int,
 ) -> Dict[str, torch.Tensor]:
     """Compute EK-FAC structure primitives (coherence, mass, dominance) per eval sample."""
-    del mean_predictions  # predicted class not required for pairwise score rows
     cache_dir = run_cache_dir / "ek_fak"
     scores = _load_cached_scores(cache_dir)
     if scores is None:
@@ -201,6 +226,7 @@ def compute_ek_fak_structure_signals(
             model=model,
             train_dataset=train_dataset,
             eval_inputs=eval_inputs,
+            mean_predictions=mean_predictions,
             device=device,
             batch_size=batch_size,
             train_batch_size=train_batch_size,
@@ -215,4 +241,7 @@ def compute_ek_fak_structure_signals(
             f"EK-FAC score rows ({scores.shape[0]}) != eval samples ({eval_inputs.shape[0]}). "
             "Delete the ek_fak cache and re-run."
         )
-    return structure_signals_from_influence_matrix(scores, top_k)
+    with torch.no_grad():
+        structure = structure_signals_from_influence_matrix(scores, top_k)
+    structure["influence_matrix"] = scores
+    return structure

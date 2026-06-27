@@ -447,7 +447,7 @@ def create_feature_extractor(
         ...     model=cnn_model,
         ... )
     """
-    from uqlab.models.architecture import normalize_architecture
+    from uqlab.models.architecture import normalize_architecture, normalize_dinov2_model
 
     arch = normalize_architecture(config.architecture)
     if arch == "dinov2_mlp":
@@ -457,28 +457,30 @@ def create_feature_extractor(
                 "DINOv2 feature extractor requires: dataset, split_spec, "
                 "feature_cache_dir, and noise_type"
             )
+
+        dinov2_model = normalize_dinov2_model(config.dinov2_model)
         
         return DINOv2FeatureExtractor(
             dataset=dataset,
             split_spec=split_spec,
             feature_cache_dir=feature_cache_dir,
             noise_type=noise_type,
-            dinov2_model=config.dinov2_model,
+            dinov2_model=dinov2_model,
             batch_size=batch_size,
             device=device,
         )
     
-    elif arch == "cnn_small":
-        # CNN requires pre-initialized model
+    elif arch in ("cnn_small", "pixel_mlp"):
+        # End-to-end models with extract_features() (CNN backbone or pixel MLP).
         if model is None:
-            raise ValueError("CNN feature extractor requires a pre-initialized model")
-        
+            raise ValueError(f"{arch} feature extractor requires a pre-initialized model")
+
         return CNNFeatureExtractor(
             model=model,
             device=device,
             batch_size=batch_size,
         )
-    
+
     elif arch == "resnet18":
         # ResNet requires pre-initialized model
         if model is None:
@@ -493,7 +495,7 @@ def create_feature_extractor(
     else:
         raise ValueError(
             f"Unknown architecture: {config.architecture}. "
-            f"Supported: dinov2_mlp, cnn_mcdropout, resnet18_mcdropout"
+            f"Supported: dinov2_mlp, cnn_mcdropout, pixel_mlp, resnet18_mcdropout"
         )
 
 

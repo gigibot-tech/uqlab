@@ -14,7 +14,18 @@ Consolidates from:
 
 from typing import Tuple
 
+import torch
 from torchvision import transforms
+
+
+class RepeatChannels:
+    """Picklable 1→N channel repeat (DataLoader workers require picklable transforms)."""
+
+    def __init__(self, times: int = 3) -> None:
+        self.times = times
+
+    def __call__(self, x: torch.Tensor) -> torch.Tensor:
+        return x.repeat(self.times, 1, 1)
 
 
 # CIFAR-10 normalization constants
@@ -32,7 +43,7 @@ def get_mnist_transforms(*, repeat_channels: int = 3) -> transforms.Compose:
     """MNIST → tensor, optional 3-channel repeat, resize to 32 for ResNet path."""
     steps = [transforms.ToTensor(), transforms.Resize((32, 32))]
     if repeat_channels == 3:
-        steps.append(transforms.Lambda(lambda x: x.repeat(3, 1, 1)))
+        steps.append(RepeatChannels(3))
         steps.append(transforms.Normalize(MNIST_MEAN_3CH, MNIST_STD_3CH))
     else:
         steps.append(transforms.Normalize(MNIST_MEAN, MNIST_STD))

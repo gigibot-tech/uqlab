@@ -19,10 +19,11 @@ from uqlab.evaluation.signals.primitives import (
     MC_MEAN_PRED,
     MC_MUTUAL_INFO,
     PrimitiveStore,
+    attribution_distribution_store,
     namespaced_attribution_store,
     predicted_class_logit_magnitude,
 )
-from uqlab.evaluation.legacy.triage.dualxda_axioms import DualXDATracer, infer_classifier_layer_name
+from uqlab.evaluation.signals.dualxda_tracer import DualXDATracer, infer_classifier_layer_name
 from uqlab.evaluation.signals.mc_dropout import calculate_mc_dropout_uncertainty
 from uqlab.models.mc_dropout import mc_forward_efficient
 
@@ -144,13 +145,25 @@ def dualxda_primitives(ctx: EvalContext) -> PrimitiveStore:
         top_k=ctx.top_k,
         num_classes=ctx.num_classes,
     )
-    return namespaced_attribution_store(
+    store = namespaced_attribution_store(
         "dualxda",
         raw["coherence"],
         raw["mass"],
         raw["dominance"],
         write_legacy_alias=True,
     )
+    if "influence_matrix" in raw:
+        from uqlab.evaluation.signals.primitives import INFLUENCE_DUALXDA
+
+        store[INFLUENCE_DUALXDA] = raw["influence_matrix"]
+    dist_store = attribution_distribution_store(
+        "dualxda",
+        entropy=raw["entropy"],
+        participation=raw["participation"],
+        signed_split=raw["signed_split"],
+        variance=raw["variance"],
+    )
+    return {**store, **dist_store}
 
 
 def graddot_primitives(ctx: EvalContext) -> PrimitiveStore:
@@ -168,12 +181,18 @@ def graddot_primitives(ctx: EvalContext) -> PrimitiveStore:
         top_k=ctx.top_k,
         run_cache_dir=ctx.run_cache_dir,
     )
-    return namespaced_attribution_store(
+    influence = raw.pop("influence_matrix", None)
+    store = namespaced_attribution_store(
         "graddot",
         raw["coherence"],
         raw["mass"],
         raw["dominance"],
     )
+    if influence is not None:
+        from uqlab.evaluation.signals.primitives import INFLUENCE_GRADDOT
+
+        store[INFLUENCE_GRADDOT] = influence
+    return store
 
 
 def ek_fak_primitives(ctx: EvalContext) -> PrimitiveStore:
@@ -193,12 +212,18 @@ def ek_fak_primitives(ctx: EvalContext) -> PrimitiveStore:
         run_cache_dir=ctx.run_cache_dir,
         train_batch_size=ctx.train_batch_size,
     )
-    return namespaced_attribution_store(
+    influence = raw.pop("influence_matrix", None)
+    store = namespaced_attribution_store(
         "ek_fak",
         raw["coherence"],
         raw["mass"],
         raw["dominance"],
     )
+    if influence is not None:
+        from uqlab.evaluation.signals.primitives import INFLUENCE_EK_FAK
+
+        store[INFLUENCE_EK_FAK] = influence
+    return store
 
 
 ATTRIBUTION_METHODS: Dict[str, AttributionFn] = {

@@ -126,6 +126,34 @@ METRIC_META: Dict[str, MetricMeta] = {
         sources=("deterministic_forward",),
         epistemic=True,
     ),
+    "attribution_entropy_dualxda": MetricMeta(
+        id="attribution_entropy_dualxda",
+        family="attribution",
+        label="Attribution Entropy (DualXDA)",
+        sources=("attribution_dualxda",),
+        epistemic=True,
+    ),
+    "attribution_participation_dualxda": MetricMeta(
+        id="attribution_participation_dualxda",
+        family="attribution",
+        label="Attribution Participation (DualXDA)",
+        sources=("attribution_dualxda",),
+        epistemic=True,
+    ),
+    "attribution_signed_split_dualxda": MetricMeta(
+        id="attribution_signed_split_dualxda",
+        family="attribution",
+        label="Attribution Signed Split (DualXDA)",
+        sources=("attribution_dualxda",),
+        aleatoric=True,
+    ),
+    "attribution_variance_dualxda": MetricMeta(
+        id="attribution_variance_dualxda",
+        family="attribution",
+        label="Attribution Variance (DualXDA)",
+        sources=("attribution_dualxda",),
+        aleatoric=True,
+    ),
 }
 
 

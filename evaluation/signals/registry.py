@@ -43,7 +43,11 @@ from uqlab.evaluation.signals.catalog import (
 from uqlab.evaluation.signals.primitives import (
     DUALXDA_COHERENCE,
     DUALXDA_DOMINANCE,
+    DUALXDA_ENTROPY,
     DUALXDA_MASS,
+    DUALXDA_PARTICIPATION,
+    DUALXDA_SIGNED_SPLIT,
+    DUALXDA_VARIANCE,
     EK_FAK_COHERENCE,
     EK_FAK_DOMINANCE,
     EK_FAK_MASS,
@@ -125,6 +129,22 @@ def _inverse_logit_magnitude(store: PrimitiveStore) -> torch.Tensor:
     return reciprocal_uncertainty(mag)
 
 
+def _attribution_entropy_dualxda(store: PrimitiveStore) -> torch.Tensor:
+    return store[DUALXDA_ENTROPY]
+
+
+def _attribution_participation_dualxda(store: PrimitiveStore) -> torch.Tensor:
+    return store[DUALXDA_PARTICIPATION]
+
+
+def _attribution_signed_split_dualxda(store: PrimitiveStore) -> torch.Tensor:
+    return store[DUALXDA_SIGNED_SPLIT]
+
+
+def _attribution_variance_dualxda(store: PrimitiveStore) -> torch.Tensor:
+    return store[DUALXDA_VARIANCE]
+
+
 _COMPUTE: Dict[str, Callable[[PrimitiveStore], torch.Tensor]] = {
     "msp_uncertainty": _msp,
     "predictive_entropy": _predictive_entropy,
@@ -140,6 +160,10 @@ _COMPUTE: Dict[str, Callable[[PrimitiveStore], torch.Tensor]] = {
     "inverse_dominance_graddot": _inverse_dominance_graddot,
     "inverse_mass_graddot": _inverse_mass_graddot,
     "inverse_logit_magnitude": _inverse_logit_magnitude,
+    "attribution_entropy_dualxda": _attribution_entropy_dualxda,
+    "attribution_participation_dualxda": _attribution_participation_dualxda,
+    "attribution_signed_split_dualxda": _attribution_signed_split_dualxda,
+    "attribution_variance_dualxda": _attribution_variance_dualxda,
 }
 
 
